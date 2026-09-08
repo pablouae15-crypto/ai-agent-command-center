@@ -10,6 +10,7 @@ ENGINE_ROOT = Path(r"D:\Shared-Local-Execution-Engine")
 if str(ENGINE_ROOT) not in sys.path:
     sys.path.insert(0, str(ENGINE_ROOT))
 
+from engine.approvals import ApprovalRecord
 from engine.service import LocalExecutionEngine
 
 
@@ -137,4 +138,64 @@ class ExecutionEngineAdapter:
             cwd,
             task_id=task_id,
             approval=approval,
+        )
+
+    def verified_write_text_file(
+        self,
+        path: str | Path,
+        content: str,
+        *,
+        repository_path: str | Path,
+        verification_profile: str,
+        task_id: str,
+        approval: ApprovalRecord,
+        expected_sha256: str | None = None,
+        max_bytes: int = 1_000_000,
+    ) -> dict[str, Any]:
+        if not isinstance(approval, ApprovalRecord):
+            raise TypeError(
+                "verified_write_text_file requires a validated ApprovalRecord."
+            )
+
+        return self._require_ready().verified_write_text_file(
+            path,
+            content,
+            repository_path=repository_path,
+            verification_profile=verification_profile,
+            task_id=task_id,
+            approval=approval,
+            expected_sha256=expected_sha256,
+            max_bytes=max_bytes,
+        )
+
+    def verified_replace_text(
+        self,
+        path: str | Path,
+        old_text: str,
+        new_text: str,
+        *,
+        repository_path: str | Path,
+        verification_profile: str,
+        task_id: str,
+        approval: ApprovalRecord,
+        expected_replacements: int = 1,
+        expected_sha256: str | None = None,
+        max_bytes: int = 1_000_000,
+    ) -> dict[str, Any]:
+        if not isinstance(approval, ApprovalRecord):
+            raise TypeError(
+                "verified_replace_text requires a validated ApprovalRecord."
+            )
+
+        return self._require_ready().verified_replace_text(
+            path,
+            old_text,
+            new_text,
+            repository_path=repository_path,
+            verification_profile=verification_profile,
+            task_id=task_id,
+            approval=approval,
+            expected_replacements=expected_replacements,
+            expected_sha256=expected_sha256,
+            max_bytes=max_bytes,
         )
