@@ -7,33 +7,88 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-load_dotenv(PROJECT_ROOT / ".env")
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
 
 
-def _bool_env(name: str, default: bool = False) -> bool:
-    value = os.getenv(name)
+def _as_bool(value: str | None, default: bool = False) -> bool:
     if value is None:
         return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+    return value.strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
-def _path_env(name: str, default: str) -> Path:
-    value = os.getenv(name, default)
-    path = Path(value)
-    return path if path.is_absolute() else PROJECT_ROOT / path
+def _workspace_roots(value: str | None) -> list[str]:
+    if not value:
+        return []
+
+    return [
+        item.strip()
+        for item in value.split(";")
+        if item.strip()
+    ]
 
 
 @dataclass(frozen=True)
 class Settings:
-    host: str = os.getenv("APP_HOST", "127.0.0.1")
-    port: int = int(os.getenv("APP_PORT", "8421"))
-    db_path: Path = _path_env("DB_PATH", "data/command_center.db")
-    audit_log_path: Path = _path_env("AUDIT_LOG_PATH", "logs/audit.jsonl")
-    openai_model: str = os.getenv("OPENAI_MODEL", "gpt-5.6")
-    enable_agent_runs: bool = _bool_env("ENABLE_AGENT_RUNS", False)
-    scheduler_poll_seconds: float = float(os.getenv("SCHEDULER_POLL_SECONDS", "5"))
-    worker_poll_seconds: float = float(os.getenv("WORKER_POLL_SECONDS", "3"))
+    host: str = os.getenv("HOST", "127.0.0.1")
+    port: int = int(os.getenv("APP_PORT", os.getenv("PORT", "8421")))
+
+    db_path: Path = Path(
+        os.getenv(
+            "DB_PATH",
+            str(BASE_DIR / "data" / "command_center.db"),
+        )
+    )
+
+    audit_log_path: Path = Path(
+        os.getenv(
+            "AUDIT_LOG_PATH",
+            str(BASE_DIR / "logs" / "audit.jsonl"),
+        )
+    )
+
+    enable_agent_runs: bool = _as_bool(
+        os.getenv("ENABLE_AGENT_RUNS"),
+        False,
+    )
+
+    openai_model: str = os.getenv(
+        "OPENAI_MODEL",
+        "gpt-5",
+    )
+
+    scheduler_poll_seconds: float = float(
+        os.getenv("SCHEDULER_POLL_SECONDS", "2")
+    )
+
+    worker_poll_seconds: float = float(
+        os.getenv("WORKER_POLL_SECONDS", "2")
+    )
+
+    execution_engine_enabled: bool = _as_bool(
+        os.getenv("EXECUTION_ENGINE_ENABLED"),
+        False,
+    )
+
+    execution_engine_workspace_roots: tuple[str, ...] = tuple(
+        _workspace_roots(
+            os.getenv("EXECUTION_ENGINE_WORKSPACE_ROOTS")
+        )
+    )
+
+    execution_engine_audit_log: Path = Path(
+        os.getenv(
+            "EXECUTION_ENGINE_AUDIT_LOG",
+            str(BASE_DIR / "logs" / "execution-engine.jsonl"),
+        )
+    )
 
 
 settings = Settings()
+

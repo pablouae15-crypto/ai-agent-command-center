@@ -13,11 +13,25 @@ from agent import api_key_configured
 from config import settings
 from runtime import Runtime
 from store import TaskStore
+from execution_adapter import ExecutionEngineAdapter
+from execution_adapter import ExecutionEngineAdapter
 
 
 store = TaskStore(settings.db_path, settings.audit_log_path)
 store.seed_defaults()
 runtime = Runtime(store, settings)
+
+execution_engine = ExecutionEngineAdapter(
+    enabled=settings.execution_engine_enabled,
+    authorized_roots=list(settings.execution_engine_workspace_roots),
+    audit_log_path=settings.execution_engine_audit_log,
+)
+
+execution_engine = ExecutionEngineAdapter(
+    enabled=settings.execution_engine_enabled,
+    authorized_roots=list(settings.execution_engine_workspace_roots),
+    audit_log_path=settings.execution_engine_audit_log,
+)
 
 
 @asynccontextmanager
@@ -30,6 +44,23 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="AI Agent Command Center", version="0.1.0", lifespan=lifespan)
 
 
+
+class ExecutionRequest(BaseModel):
+    capability: Literal[
+        "list_directory",
+        "read_text_file",
+        "search_text",
+        "git_status",
+        "git_diff",
+        "git_log",
+        "run_command_profile",
+    ]
+    path: str | None = None
+    query: str | None = None
+    profile_id: str | None = None
+    task_id: str | None = None
+    max_results: int = Field(default=200, ge=1, le=1000)
+    max_count: int = Field(default=20, ge=1, le=100)
 class TaskCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     description: str = Field(min_length=1, max_length=10000)
@@ -47,9 +78,31 @@ def health() -> dict:
         "database": "ok",
         "openai_key_configured": api_key_configured(),
         "agent_execution_enabled": settings.enable_agent_runs,
+        "execution_engine_enabled": settings.execution_engine_enabled,
+        "execution_engine_ready": execution_engine.ready,
+        "authorized_workspace_count": len(settings.execution_engine_workspace_roots),
+        "execution_engine_enabled": settings.execution_engine_enabled,
+        "execution_engine_ready": execution_engine.ready,
+        "authorized_workspace_count": len(settings.execution_engine_workspace_roots),
     }
 
 
+
+@app.get("/api/execution/status")
+def execution_status() -> dict:
+    return {
+        "enabled": settings.execution_engine_enabled,
+        "ready": execution_engine.ready,
+        "authorized_workspace_count": len(settings.execution_engine_workspace_roots),
+    }
+
+@app.get("/api/execution/status")
+def execution_status() -> dict:
+    return {
+        "enabled": settings.execution_engine_enabled,
+        "ready": execution_engine.ready,
+        "authorized_workspace_count": len(settings.execution_engine_workspace_roots),
+    }
 @app.get("/api/summary")
 def summary() -> dict:
     return {
@@ -80,6 +133,83 @@ def decide_approval(approval_id: str, decision: Literal["approved", "rejected"])
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+
+@app.post("/api/execution/request")
+def execution_request(request: ExecutionRequest):
+    if not execution_engine.ready:
+        raise HTTPException(
+            status_code=503,
+            detail="Shared Local Execution Engine is disabled or not ready.",
+        )
+
+    try:
+        if request.capability == "list_directory":
+            if not request.path:
+                raise ValueError("path is required.")
+            return execution_engine.list_directory(
+                request.path,
+                task_id=request.task_id,
+            )
+
+        if request.capability == "read_text_file":
+            if not request.path:
+                raise ValueError("path is required.")
+            return execution_engine.read_text_file(
+                request.path,
+                task_id=request.task_id,
+            )
+
+        if request.capability == "search_text":
+            if not request.path or request.query is None:
+                raise ValueError("path and query are required.")
+            return execution_engine.search_text(
+                request.path,
+                request.query,
+                task_id=request.task_id,
+                max_results=request.max_results,
+            )
+
+        if request.capability == "git_status":
+            if not request.path:
+                raise ValueError("path is required.")
+            return execution_engine.git_status(
+                request.path,
+                task_id=request.task_id,
+            )
+
+        if request.capability == "git_diff":
+            if not request.path:
+                raise ValueError("path is required.")
+            return execution_engine.git_diff(
+                request.path,
+                task_id=request.task_id,
+            )
+
+        if request.capability == "git_log":
+            if not request.path:
+                raise ValueError("path is required.")
+            return execution_engine.git_log(
+                request.path,
+                task_id=request.task_id,
+                max_count=request.max_count,
+            )
+
+        if request.capability == "run_command_profile":
+            if not request.path or not request.profile_id:
+                raise ValueError("path and profile_id are required.")
+            result = execution_engine.run_command_profile(
+                request.profile_id,
+                request.path,
+                task_id=request.task_id,
+            )
+            return result.__dict__
+
+        raise PermissionError("Capability denied.")
+
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 @app.get("/api/activity")
 def activity() -> list[dict]:
     return store.list_activity()
@@ -94,3 +224,6 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("main:app", host=settings.host, port=settings.port, reload=False)
+
+
+
