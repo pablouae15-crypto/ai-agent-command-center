@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from write_approval import VerifiedEditRequest, approval_action_for_request
+
 
 PRIORITIES = ("Critical", "High", "Medium", "Low")
 STATUSES = ("queued", "running", "awaiting_approval", "completed", "failed")
@@ -237,12 +239,76 @@ class TaskStore:
         self.add_activity("task.failed", f"Task failed: {task['title'] if task else task_id}", task_id=task_id,
                           agent_name=task["agent_name"] if task else None, payload={"error": error[:500]})
 
+    def create_exact_approval(
+        self,
+        request: VerifiedEditRequest,
+        reason: str = "Verified edit approval",
+    ) -> dict[str, Any]:
+        task = self.get_task(request.task_id)
+        if not task:
+            raise ValueError("task not found")
+
+        action = approval_action_for_request(request)
+
+        with self._lock, self._connect() as db:
+            existing = db.execute(
+                "SELECT * FROM approvals "
+                "WHERE task_id=? AND action=? AND status='pending'",
+                (request.task_id, action),
+            ).fetchone()
+
+            if existing:
+                approval = dict(existing)
+            else:
+                approval_id = str(uuid.uuid4())
+                now = utc_now()
+                db.execute(
+                    "INSERT INTO approvals(id,task_id,action,reason,created_at) "
+                    "VALUES(?,?,?,?,?)",
+                    (approval_id, request.task_id, action, reason, now),
+                )
+                db.execute(
+                    "UPDATE tasks SET status='awaiting_approval', "
+                    "approval_id=?, updated_at=? WHERE id=?",
+                    (approval_id, now, request.task_id),
+                )
+                approval = dict(
+                    db.execute(
+                        "SELECT * FROM approvals WHERE id=?",
+                        (approval_id,),
+                    ).fetchone()
+                )
+
+        self.add_activity(
+            "approval.requested",
+            "Exact verified-edit approval requested",
+            task_id=request.task_id,
+            agent_name=task["agent_name"],
+            payload={
+                "approval_id": approval["id"],
+                "capability": request.capability,
+            },
+        )
+        return approval
+
+    def get_approval(self, approval_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM approvals WHERE id=?",
+                (approval_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
     def ensure_approval(self, task_id: str) -> dict[str, Any]:
         task = self.get_task(task_id)
         if not task:
             raise ValueError("task not found")
         with self._lock, self._connect() as db:
-            existing = db.execute("SELECT * FROM approvals WHERE task_id=? AND status='pending'", (task_id,)).fetchone()
+            existing = db.execute(
+                "SELECT * FROM approvals "
+                "WHERE task_id=? AND action=? AND status='pending'",
+                (task_id, task["title"]),
+            ).fetchone()
             if existing:
                 approval = dict(existing)
             else:
