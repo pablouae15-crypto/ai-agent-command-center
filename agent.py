@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 from agents import Agent, Runner, function_tool
 
 from config import settings
 from execution_adapter import ExecutionEngineAdapter
+from store import TaskStore
+from write_approval import VerifiedEditRequest, validate_stored_approval
 
 
 def api_key_configured() -> bool:
@@ -107,7 +110,84 @@ def run_command_profile(
     )
 
 
-def build_orchestrator(model: str) -> Agent:
+
+SANDBOX_ROOT = Path(r"D:\Shared-Local-Execution-Engine-Sandbox")
+
+
+def _require_sandbox_path(path: str, *, repository: bool = False) -> None:
+    sandbox = SANDBOX_ROOT.resolve()
+    candidate = Path(path).resolve()
+
+    if repository:
+        if candidate != sandbox:
+            raise PermissionError(
+                "Verified edits require the repository path to be exactly "
+                r"D:\Shared-Local-Execution-Engine-Sandbox."
+            )
+        return
+
+    try:
+        candidate.relative_to(sandbox)
+    except ValueError as exc:
+        raise PermissionError(
+            "Verified edits are restricted to "
+            r"D:\Shared-Local-Execution-Engine-Sandbox."
+        ) from exc
+
+
+def build_verified_replace_text_tool(
+    store: TaskStore,
+    task_id: str,
+):
+    @function_tool
+    def verified_replace_text(
+        approval_id: str,
+        path: str,
+        repository_path: str,
+        old_text: str,
+        new_text: str,
+        expected_replacements: int = 1,
+    ) -> str:
+        """Perform one exact, human-approved text replacement in the disposable sandbox."""
+        if not approval_id.strip():
+            raise PermissionError("approval_id is required.")
+
+        if expected_replacements < 1:
+            raise ValueError("expected_replacements must be at least 1.")
+
+        _require_sandbox_path(repository_path, repository=True)
+        _require_sandbox_path(path)
+
+        request = VerifiedEditRequest(
+            task_id=task_id,
+            capability="replace_text",
+            path=path,
+            repository_path=repository_path,
+            verification_profile="sandbox_pytest",
+            old_text=old_text,
+            new_text=new_text,
+            expected_replacements=expected_replacements,
+        )
+
+        approval_row = store.get_approval(approval_id)
+        approval = validate_stored_approval(approval_row, request)
+
+        result = execution_engine.verified_replace_text(
+            path,
+            old_text,
+            new_text,
+            repository_path=repository_path,
+            verification_profile="sandbox_pytest",
+            task_id=task_id,
+            approval=approval,
+            expected_replacements=expected_replacements,
+        )
+        return str(result)
+
+    return verified_replace_text
+
+
+def build_orchestrator(model: str, store: TaskStore, task_id: str) -> Agent:
     return Agent(
         name="Command Center Orchestrator",
         model=model,
@@ -123,7 +203,12 @@ def build_orchestrator(model: str) -> Agent:
             "result, and continue only when justified. "
             "Do not repeatedly rerun the same verification without a reason. "
             "Stop immediately if a tool returns a security denial or approval requirement. "
-            "You do not edit files in this phase. "
+            "The only permitted write operation is verified_replace_text, and it may be used only "
+            "with a real stored approval_id matching the exact edit request. "
+            "Never fabricate, construct, infer, or substitute an approval record or approval_id. "
+            "Verified edits are restricted to D:\\Shared-Local-Execution-Engine-Sandbox, must use "
+            "sandbox_pytest verification, and must rely on the execution engine rollback behavior "
+            "if verification fails. "
             "When finished, summarize what you inspected, what verification ran, the result, and any "
             "remaining issue. Keep the final answer concise and evidence-based."
         ),
@@ -135,11 +220,16 @@ def build_orchestrator(model: str) -> Agent:
             git_diff,
             git_log,
             run_command_profile,
+            build_verified_replace_text_tool(store, task_id),
         ],
     )
 
 
-async def run_orchestrator(task: dict[str, Any], model: str) -> str:
+async def run_orchestrator(
+    task: dict[str, Any],
+    model: str,
+    store: TaskStore,
+) -> str:
     if not api_key_configured():
         raise RuntimeError("OPENAI_API_KEY is not configured")
 
@@ -149,7 +239,7 @@ async def run_orchestrator(task: dict[str, Any], model: str) -> str:
         )
 
     result = await Runner.run(
-        build_orchestrator(model),
+        build_orchestrator(model, store, str(task["id"])),
         task["description"],
         max_turns=10,
     )

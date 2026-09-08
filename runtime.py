@@ -53,7 +53,11 @@ class Runtime:
                 task = self.store.claim_next_task()
                 if task:
                     try:
-                        output = await run_orchestrator(task, self.settings.openai_model)
+                        output = await run_orchestrator(
+                            task,
+                            self.settings.openai_model,
+                            self.store,
+                        )
                         self.store.complete_task(task["id"], {"output": output, "completed_at": datetime.now(timezone.utc).isoformat()})
                     except Exception as exc:  # noqa: BLE001 - the task must be audited as failed.
                         self.store.fail_task(task["id"], str(exc))
