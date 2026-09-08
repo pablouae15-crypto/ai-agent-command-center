@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-agent-command-center"
+version = "0.1.0"
+description = "A small, approval-first local command center for a 24/7 AI agent."
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn[standard]>=0.30,<1",
+  "python-dotenv>=1.0,<2",
+  "openai-agents>=0.2,<1",
+]
+
+[tool.setuptools]
+py-modules = ["main", "agent", "config", "runtime", "store"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

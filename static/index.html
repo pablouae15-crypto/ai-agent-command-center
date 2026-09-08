@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Agent Command Center</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, Segoe UI, sans-serif; background:#101827; color:#e7eef8; }
+    body { margin:0; background:linear-gradient(135deg,#101827,#17253b); }
+    main { max-width:1300px; margin:auto; padding:28px; }
+    header { display:flex; justify-content:space-between; gap:20px; align-items:flex-start; margin-bottom:24px; }
+    h1 { margin:0 0 6px; font-size:28px; } h2 { font-size:17px; margin:0 0 14px; }
+    .muted { color:#9aabc0; } .pill { border-radius:999px; padding:6px 10px; background:#1e3655; font-size:12px; }
+    .grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin-bottom:18px; }
+    .card { background:#17253b; border:1px solid #2c425d; border-radius:14px; padding:16px; box-shadow:0 8px 30px #07101c55; }
+    .metric { font-size:27px; font-weight:700; } .label { color:#9aabc0; font-size:12px; text-transform:uppercase; letter-spacing:.08em; }
+    .columns { display:grid; grid-template-columns:1.2fr .8fr; gap:18px; } table { width:100%; border-collapse:collapse; font-size:13px; }
+    th,td { padding:10px 8px; border-bottom:1px solid #2c425d; text-align:left; vertical-align:top; } th { color:#9aabc0; font-weight:600; }
+    .status { color:#b8d8ff; } .critical { color:#ff9b9b; } .high { color:#ffd08a; } .low { color:#a9e7ba; }
+    button { border:0; border-radius:8px; padding:7px 10px; background:#4d8ed8; color:white; cursor:pointer; margin-right:5px; }
+    button.reject { background:#a64959; } form { display:grid; gap:9px; } input,textarea,select { background:#0f1928; color:#e7eef8; border:1px solid #38516f; border-radius:8px; padding:9px; font:inherit; } textarea { min-height:80px; }
+    .full { grid-column:1/-1; } .activity { max-height:260px; overflow:auto; } .activity div { padding:8px 0; border-bottom:1px solid #2c425d; font-size:13px; }
+    @media(max-width:900px){.grid,.columns{grid-template-columns:1fr 1fr}.columns{grid-template-columns:1fr}.full{grid-column:auto}}
+    @media(max-width:560px){.grid{grid-template-columns:1fr 1fr} header{display:block}}
+  </style>
+</head>
+<body>
+<main>
+  <header><div><h1>AI Agent Command Center</h1><div class="muted">Approval-first local control plane for a 24/7 orchestrator</div></div><div id="health" class="pill">checking health…</div></header>
+  <section id="metrics" class="grid"></section>
+  <section class="columns">
+    <div class="card"><h2>Tasks</h2><div style="overflow:auto"><table><thead><tr><th>Priority</th><th>Task</th><th>Agent</th><th>Status</th></tr></thead><tbody id="tasks"></tbody></table></div></div>
+    <div class="card"><h2>Approvals waiting</h2><div id="approvals" class="muted">None</div></div>
+    <div class="card"><h2>Agent status</h2><div style="overflow:auto"><table><thead><tr><th>Agent</th><th>Status</th><th>Last seen</th></tr></thead><tbody id="agents"></tbody></table></div></div>
+    <div class="card"><h2>New local task</h2><form id="task-form"><input name="title" placeholder="Task title" required /><textarea name="description" placeholder="Describe the work" required></textarea><select name="priority"><option>Medium</option><option>Critical</option><option>High</option><option>Low</option></select><button>Add queued task</button></form><p class="muted">External/destructive work automatically enters the approval queue.</p></div>
+    <div class="card full"><h2>Recent activity</h2><div id="activity" class="activity"></div></div>
+  </section>
+</main>
+<script>
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function refresh(){
+  const res = await fetch('/api/summary'); const d = await res.json();
+  const counts = d.task_counts || {};
+  document.querySelector('#health').textContent = d.execution_note.includes('opt-in') ? 'healthy · execution opt-in' : 'healthy';
+  document.querySelector('#metrics').innerHTML = [['Queued',counts.queued||0],['Running',counts.running||0],['Completed',counts.completed||0],['Approvals',d.approvals_waiting||0]].map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="metric">${x[1]}</div></div>`).join('');
+  document.querySelector('#tasks').innerHTML = (d.tasks||[]).map(t=>`<tr><td class="${t.priority.toLowerCase()}">${esc(t.priority)}</td><td><strong>${esc(t.title)}</strong><br><span class="muted">${esc(t.description).slice(0,120)}</span></td><td>${esc(t.agent_name)}</td><td class="status">${esc(t.status)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">No tasks</td></tr>';
+  document.querySelector('#agents').innerHTML = (d.agents||[]).map(a=>`<tr><td>${esc(a.name)}</td><td>${esc(a.status)}</td><td class="muted">${new Date(a.last_seen_at).toLocaleString()}</td></tr>`).join('');
+  document.querySelector('#approvals').innerHTML = (d.approvals||[]).map(a=>`<div style="margin-bottom:14px"><strong>${esc(a.action)}</strong><br><span class="muted">${esc(a.reason)}</span><br><button onclick="decide('${a.id}','approved')">Approve</button><button class="reject" onclick="decide('${a.id}','rejected')">Reject</button></div>`).join('') || '<span class="muted">None</span>';
+  document.querySelector('#activity').innerHTML = (d.activity||[]).map(a=>`<div><strong>${esc(a.event_type)}</strong> · ${esc(a.message)}<br><span class="muted">${new Date(a.created_at).toLocaleString()}</span></div>`).join('');
+}
+async function decide(id, decision){ await fetch(`/api/approvals/${id}/${decision}`,{method:'POST'}); refresh(); }
+document.querySelector('#task-form').addEventListener('submit', async (e)=>{e.preventDefault(); const f=new FormData(e.target); await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.fromEntries(f))}); e.target.reset(); refresh();});
+refresh(); setInterval(refresh,5000);
+</script>
+</body></html>

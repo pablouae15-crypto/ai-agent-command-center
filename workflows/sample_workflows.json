@@ -1,0 +1,8 @@
+[
+  {"name":"Executive Assistant","status":"placeholder","external_writes_enabled":false,"description":"Local planning, summaries, and task triage."},
+  {"name":"Email / Calendar","status":"placeholder","external_writes_enabled":false,"description":"Connector placeholder; no messages or events are sent or changed."},
+  {"name":"HR & Compliance","status":"placeholder","external_writes_enabled":false,"description":"Local policy review placeholder."},
+  {"name":"Job Tracker","status":"placeholder","external_writes_enabled":false,"description":"Local application tracking placeholder."},
+  {"name":"Research / News","status":"placeholder","external_writes_enabled":false,"description":"Research connector placeholder."},
+  {"name":"Command Center Updater","status":"placeholder","external_writes_enabled":false,"description":"Recurring local heartbeat and state summary."}
+]
