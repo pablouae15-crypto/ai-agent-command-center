@@ -45,7 +45,21 @@ async function refresh(){
   document.querySelector('#metrics').innerHTML = [['Queued',counts.queued||0],['Running',counts.running||0],['Completed',counts.completed||0],['Approvals',d.approvals_waiting||0]].map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="metric">${x[1]}</div></div>`).join('');
   document.querySelector('#tasks').innerHTML = (d.tasks||[]).map(t=>`<tr><td class="${t.priority.toLowerCase()}">${esc(t.priority)}</td><td><strong>${esc(t.title)}</strong><br><span class="muted">${esc(t.description).slice(0,120)}</span></td><td>${esc(t.agent_name)}</td><td class="status">${esc(t.status)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">No tasks</td></tr>';
   document.querySelector('#agents').innerHTML = (d.agents||[]).map(a=>`<tr><td>${esc(a.name)}</td><td>${esc(a.status)}</td><td class="muted">${new Date(a.last_seen_at).toLocaleString()}</td></tr>`).join('');
-  document.querySelector('#approvals').innerHTML = (d.approvals||[]).map(a=>`<div style="margin-bottom:14px"><strong>${esc(a.action)}</strong><br><span class="muted">${esc(a.reason)}</span><br><button onclick="decide('${a.id}','approved')">Approve</button><button class="reject" onclick="decide('${a.id}','rejected')">Reject</button></div>`).join('') || '<span class="muted">None</span>';
+  document.querySelector('#approvals').innerHTML = (d.approvals||[]).map(a=>`
+    <div style="padding:12px 0;border-bottom:1px solid #2c425d">
+      <div><strong>${esc(a.action)}</strong></div>
+      <div class="muted" style="margin-top:4px">${esc(a.reason)}</div>
+      <div class="muted" style="margin-top:6px;font-size:12px">
+        Approval: ${esc(a.id)}<br>
+        Task: ${esc(a.task_id || '—')}<br>
+        Status: ${esc(a.status || 'pending')}
+      </div>
+      <div style="margin-top:10px">
+        <button onclick="decide('${a.id}','approved')">Approve</button>
+        <button class="reject" onclick="decide('${a.id}','rejected')">Reject</button>
+      </div>
+    </div>
+  `).join('') || '<span class="muted">None</span>';
   document.querySelector('#activity').innerHTML = (d.activity||[]).map(a=>`<div><strong>${esc(a.event_type)}</strong> · ${esc(a.message)}<br><span class="muted">${new Date(a.created_at).toLocaleString()}</span></div>`).join('');
 }
 async function decide(id, decision){ await fetch(`/api/approvals/${id}/${decision}`,{method:'POST'}); refresh(); }
