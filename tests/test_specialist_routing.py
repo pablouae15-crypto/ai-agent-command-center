@@ -85,7 +85,7 @@ def test_unknown_specialist_is_rejected(
         match="Unknown or unauthorized specialist agent",
     ):
         build_specialist(
-            "Executive Assistant",
+            "Email / Calendar",
             "gpt-5.6",
             store,
             "task-001",
@@ -98,6 +98,7 @@ def test_specialist_registry_contains_only_authorized_developer_roles() -> None:
         "QA",
         "UIUX",
         "CodeReviewer",
+        "Executive Assistant",
     }
 
 
@@ -122,3 +123,18 @@ def test_specialist_runner_keeps_ten_turn_limit() -> None:
     ]
 
     assert "max_turns=10" in specialist_section
+
+
+def test_executive_assistant_is_seeded_idle(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+    store.seed_defaults()
+
+    executive = next(
+        row for row in store.list_agents()
+        if row["name"] == "Executive Assistant"
+    )
+
+    assert executive["status"] == "idle"
+    assert "coordinates approved work" in executive["description"]

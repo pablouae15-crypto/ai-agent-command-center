@@ -320,6 +320,13 @@ SPECIALIST_INSTRUCTIONS = {
         "readability, architectural consistency, and regression risk. "
         "Prefer review and evidence over editing unless an exact approved edit is required."
     ),
+    "Executive Assistant": (
+        "Act as the Executive Assistant specialist. Focus on organizing tasks, planning work, "
+        "summarizing information, preparing next actions, and coordinating work inside the "
+        "Command Center. Do not claim to send email, modify calendars, browse external services, "
+        "control the PC, or perform external actions unless a separately authorized typed tool "
+        "is explicitly provided. Preserve the existing approval and sandbox security boundary."
+    ),
 }
 
 

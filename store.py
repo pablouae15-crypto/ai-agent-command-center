@@ -115,7 +115,7 @@ class TaskStore:
             ("QA", "idle", "Designs and runs tests, verifies regressions, and analyzes defects."),
             ("UIUX", "idle", "Reviews and improves interface structure, usability, and implementation."),
             ("CodeReviewer", "idle", "Reviews code quality, maintainability, correctness, and security."),
-            ("Executive Assistant", "placeholder", "Placeholder; local planning only until connectors are configured."),
+            ("Executive Assistant", "idle", "Plans, summarizes, organizes, and coordinates approved work inside the Command Center."),
             ("Email / Calendar", "placeholder", "Placeholder; no external writes enabled."),
             ("HR & Compliance", "placeholder", "Placeholder; local policy review only."),
             ("Job Tracker", "placeholder", "Placeholder; local tracking only."),
