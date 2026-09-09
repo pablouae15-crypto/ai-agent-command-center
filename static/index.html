@@ -62,7 +62,37 @@ async function refresh(){
   `).join('') || '<span class="muted">None</span>';
   document.querySelector('#activity').innerHTML = (d.activity||[]).map(a=>`<div><strong>${esc(a.event_type)}</strong> · ${esc(a.message)}<br><span class="muted">${new Date(a.created_at).toLocaleString()}</span></div>`).join('');
 }
-async function decide(id, decision){ await fetch(`/api/approvals/${id}/${decision}`,{method:'POST'}); refresh(); }
+async function decide(id, decision){
+  const label = decision === 'approved' ? 'APPROVE' : 'REJECT';
+  const confirmed = window.confirm(
+    `${label} this approval?
+
+Approval ID: ${id}`
+  );
+
+  if (!confirmed) return;
+
+  const response = await fetch(
+    `/api/approvals/${encodeURIComponent(id)}/${decision}`,
+    {method:'POST'}
+  );
+
+  if (!response.ok) {
+    let detail = `Approval decision failed (${response.status}).`;
+
+    try {
+      const body = await response.json();
+      if (body.detail) detail = body.detail;
+    } catch (_) {
+      // Keep the HTTP fallback message.
+    }
+
+    window.alert(detail);
+    return;
+  }
+
+  await refresh();
+}
 document.querySelector('#task-form').addEventListener('submit', async (e)=>{e.preventDefault(); const f=new FormData(e.target); await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.fromEntries(f))}); e.target.reset(); refresh();});
 refresh(); setInterval(refresh,5000);
 </script>
