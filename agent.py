@@ -9,7 +9,11 @@ from agents import Agent, Runner, function_tool
 from config import settings
 from execution_adapter import ExecutionEngineAdapter
 from store import TaskStore
-from write_approval import VerifiedEditRequest, validate_stored_approval
+from write_approval import (
+    VerifiedEditRequest,
+    VerifiedFileWriteRequest,
+    validate_stored_approval,
+)
 
 
 def api_key_configured() -> bool:
@@ -187,6 +191,73 @@ def build_verified_replace_text_tool(
     return verified_replace_text
 
 
+def build_verified_write_text_file_tool(
+    store: TaskStore,
+    task_id: str,
+):
+    @function_tool
+    def verified_write_text_file(
+        approval_id: str,
+        path: str,
+        repository_path: str,
+        content: str,
+        expected_sha256: str,
+    ) -> str:
+        """Replace one existing sandbox text file using an exact human-approved full-file write."""
+        if not approval_id.strip():
+            raise PermissionError("approval_id is required.")
+
+        if not expected_sha256.strip():
+            raise ValueError("expected_sha256 is required.")
+
+        normalized_sha256 = expected_sha256.strip().lower()
+
+        if (
+            len(normalized_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in normalized_sha256)
+        ):
+            raise ValueError(
+                "expected_sha256 must be a 64-character hexadecimal SHA256 value."
+            )
+
+        _require_sandbox_path(repository_path, repository=True)
+        _require_sandbox_path(path)
+
+        candidate = Path(path).resolve()
+
+        if not candidate.is_file():
+            raise FileNotFoundError(
+                "verified_write_text_file may modify existing files only."
+            )
+
+        request = VerifiedFileWriteRequest(
+            task_id=task_id,
+            capability="write_text_file",
+            path=path,
+            repository_path=repository_path,
+            verification_profile="sandbox_pytest",
+            content=content,
+            expected_sha256=normalized_sha256,
+        )
+
+        approval_row = store.get_approval(approval_id)
+        approval = validate_stored_approval(approval_row, request)
+
+        result = execution_engine.verified_write_text_file(
+            path,
+            content,
+            repository_path=repository_path,
+            verification_profile="sandbox_pytest",
+            task_id=task_id,
+            approval=approval,
+            expected_sha256=normalized_sha256,
+        )
+
+        return str(result)
+
+    return verified_write_text_file
+
+
 def build_orchestrator(model: str, store: TaskStore, task_id: str) -> Agent:
     return Agent(
         name="Command Center Orchestrator",
@@ -203,8 +274,10 @@ def build_orchestrator(model: str, store: TaskStore, task_id: str) -> Agent:
             "result, and continue only when justified. "
             "Do not repeatedly rerun the same verification without a reason. "
             "Stop immediately if a tool returns a security denial or approval requirement. "
-            "The only permitted write operation is verified_replace_text, and it may be used only "
-            "with a real stored approval_id matching the exact edit request. "
+            "The only permitted write operations are verified_replace_text and "
+            "verified_write_text_file. Both may be used only with a real stored approval_id "
+            "matching the exact approved request. verified_write_text_file may modify existing "
+            "sandbox files only and requires the approved current-file SHA256. "
             "Never fabricate, construct, infer, or substitute an approval record or approval_id. "
             "Verified edits are restricted to D:\\Shared-Local-Execution-Engine-Sandbox, must use "
             "sandbox_pytest verification, and must rely on the execution engine rollback behavior "
@@ -221,6 +294,7 @@ def build_orchestrator(model: str, store: TaskStore, task_id: str) -> Agent:
             git_log,
             run_command_profile,
             build_verified_replace_text_tool(store, task_id),
+            build_verified_write_text_file_tool(store, task_id),
         ],
     )
 
