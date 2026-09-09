@@ -371,6 +371,94 @@ class TaskStore:
         with self.audit_log_path.open("a", encoding="utf-8") as log:
             log.write(json.dumps(record, ensure_ascii=False) + "\n")
 
+    def create_job(
+        self,
+        name: str,
+        agent_name: str,
+        prompt: str,
+        interval_seconds: int,
+        next_run_at: str,
+        enabled: bool = True,
+    ) -> dict[str, Any]:
+        name = name.strip()
+        agent_name = agent_name.strip()
+        prompt = prompt.strip()
+
+        if not name:
+            raise ValueError("Recurring job name is required.")
+        if not agent_name:
+            raise ValueError("Recurring job agent_name is required.")
+        if not prompt:
+            raise ValueError("Recurring job prompt is required.")
+        if interval_seconds < 3600:
+            raise ValueError(
+                "Recurring job interval_seconds must be at least 3600."
+            )
+        if not next_run_at.strip():
+            raise ValueError("Recurring job next_run_at is required.")
+
+        job_id = str(uuid.uuid4())
+        created_at = utc_now()
+
+        with self._lock, self._connect() as db:
+            agent = db.execute(
+                "SELECT status FROM agent_status WHERE name=?",
+                (agent_name,),
+            ).fetchone()
+
+            if agent is None:
+                raise ValueError(
+                    f"Recurring job agent is not registered: {agent_name}"
+                )
+
+            if agent["status"] == "placeholder":
+                raise ValueError(
+                    f"Recurring job agent is not executable: {agent_name}"
+                )
+
+            db.execute(
+                """INSERT INTO recurring_jobs(
+                    id,
+                    name,
+                    agent_name,
+                    prompt,
+                    interval_seconds,
+                    next_run_at,
+                    enabled,
+                    created_at
+                ) VALUES(?,?,?,?,?,?,?,?)""",
+                (
+                    job_id,
+                    name,
+                    agent_name,
+                    prompt,
+                    interval_seconds,
+                    next_run_at,
+                    1 if enabled else 0,
+                    created_at,
+                ),
+            )
+
+        return {
+            "id": job_id,
+            "name": name,
+            "agent_name": agent_name,
+            "prompt": prompt,
+            "interval_seconds": interval_seconds,
+            "next_run_at": next_run_at,
+            "enabled": 1 if enabled else 0,
+            "created_at": created_at,
+        }
+
+    def list_jobs(self) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            return [
+                dict(row)
+                for row in db.execute(
+                    "SELECT * FROM recurring_jobs ORDER BY created_at, name"
+                )
+            ]
+
     def due_jobs(self) -> list[dict[str, Any]]:
         with self._connect() as db:
             return [dict(row) for row in db.execute("SELECT * FROM recurring_jobs WHERE enabled=1 AND next_run_at<=?", (utc_now(),))]

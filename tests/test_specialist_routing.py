@@ -138,3 +138,71 @@ def test_executive_assistant_is_seeded_idle(
 
     assert executive["status"] == "idle"
     assert "coordinates approved work" in executive["description"]
+
+
+def test_create_and_list_executive_assistant_recurring_job(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+    store.seed_defaults()
+
+    job = store.create_job(
+        name="Daily Executive Review",
+        agent_name="Executive Assistant",
+        prompt="Summarize approved local Command Center activity.",
+        interval_seconds=86400,
+        next_run_at="2099-01-01T08:00:00+00:00",
+    )
+
+    assert job["agent_name"] == "Executive Assistant"
+    assert job["interval_seconds"] == 86400
+    assert job["enabled"] == 1
+
+    jobs = store.list_jobs()
+
+    saved_job = next(
+        row for row in jobs
+        if row["id"] == job["id"]
+    )
+
+    assert saved_job["name"] == "Daily Executive Review"
+    assert saved_job["agent_name"] == "Executive Assistant"
+    assert saved_job["interval_seconds"] == 86400
+
+
+def test_recurring_job_rejects_interval_below_one_hour(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+    store.seed_defaults()
+
+    with pytest.raises(
+        ValueError,
+        match="at least 3600",
+    ):
+        store.create_job(
+            name="Too Frequent",
+            agent_name="Executive Assistant",
+            prompt="Run too frequently.",
+            interval_seconds=3599,
+            next_run_at="2099-01-01T08:00:00+00:00",
+        )
+
+
+def test_recurring_job_rejects_placeholder_agent(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+    store.seed_defaults()
+
+    with pytest.raises(
+        ValueError,
+        match="not executable",
+    ):
+        store.create_job(
+            name="Email Placeholder Job",
+            agent_name="Email / Calendar",
+            prompt="Do not execute external email actions.",
+            interval_seconds=3600,
+            next_run_at="2099-01-01T08:00:00+00:00",
+        )
