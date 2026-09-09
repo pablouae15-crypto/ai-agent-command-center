@@ -116,7 +116,7 @@ class TaskStore:
             ("UIUX", "idle", "Reviews and improves interface structure, usability, and implementation."),
             ("CodeReviewer", "idle", "Reviews code quality, maintainability, correctness, and security."),
             ("Executive Assistant", "idle", "Plans, summarizes, organizes, and coordinates approved work inside the Command Center."),
-            ("Email / Calendar", "placeholder", "Placeholder; no external writes enabled."),
+            ("Email / Calendar", "idle", "Provides read-only Gmail search/read and Google Calendar event listing."),
             ("HR & Compliance", "placeholder", "Placeholder; local policy review only."),
             ("Job Tracker", "placeholder", "Placeholder; local tracking only."),
             ("Research / News", "idle", "Performs read-only public web research using the hosted web-search connector."),

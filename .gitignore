@@ -11,3 +11,11 @@ logs/*.jsonl
 tests/results/
 .pytest_cache/
 .mypy_cache/
+
+# Google OAuth credentials and tokens
+credentials/
+secrets/
+google_credentials.json
+google_client_secret*.json
+google_token*.json
+token.json

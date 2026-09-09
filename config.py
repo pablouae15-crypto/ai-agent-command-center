@@ -89,6 +89,28 @@ class Settings:
         )
     )
 
+    google_oauth_client_secret_path: Path = Path(
+        os.getenv(
+            "GOOGLE_OAUTH_CLIENT_SECRET_PATH",
+            str(BASE_DIR / "credentials" / "google_client_secret.json"),
+        )
+    )
+
+    google_oauth_token_path: Path = Path(
+        os.getenv(
+            "GOOGLE_OAUTH_TOKEN_PATH",
+            str(BASE_DIR / "credentials" / "google_token.json"),
+        )
+    )
+
+    google_gmail_readonly_scope: str = (
+        "https://www.googleapis.com/auth/gmail.readonly"
+    )
+
+    google_calendar_readonly_scope: str = (
+        "https://www.googleapis.com/auth/calendar.readonly"
+    )
+
 
 settings = Settings()
 

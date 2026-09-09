@@ -85,7 +85,7 @@ def test_unknown_specialist_is_rejected(
         match="Unknown or unauthorized specialist agent",
     ):
         build_specialist(
-            "Email / Calendar",
+            "Unauthorized Specialist",
             "gpt-5.6",
             store,
             "task-001",
@@ -100,6 +100,7 @@ def test_specialist_registry_contains_only_authorized_developer_roles() -> None:
         "CodeReviewer",
         "Executive Assistant",
         "Research / News",
+        "Email / Calendar",
     }
 
 
@@ -190,23 +191,21 @@ def test_recurring_job_rejects_interval_below_one_hour(
         )
 
 
-def test_recurring_job_rejects_placeholder_agent(
+def test_recurring_job_accepts_email_calendar_agent(
     tmp_path: Path,
 ) -> None:
     store = make_store(tmp_path)
     store.seed_defaults()
 
-    with pytest.raises(
-        ValueError,
-        match="not executable",
-    ):
-        store.create_job(
-            name="Email Placeholder Job",
-            agent_name="Email / Calendar",
-            prompt="Do not execute external email actions.",
-            interval_seconds=3600,
-            next_run_at="2099-01-01T08:00:00+00:00",
-        )
+    job = store.create_job(
+        name="Email Read Only Job",
+        agent_name="Email / Calendar",
+        prompt="Review email using read-only access.",
+        interval_seconds=3600,
+        next_run_at="2099-01-01T08:00:00+00:00",
+    )
+
+    assert job["agent_name"] == "Email / Calendar"
 
 
 def test_seed_defaults_promotes_existing_placeholder_agent(
@@ -382,3 +381,88 @@ def test_seed_defaults_promotes_existing_research_placeholder(
     )
 
     assert research["status"] == "idle"
+
+
+def test_email_calendar_gets_readonly_google_tools(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+
+    specialist = build_specialist(
+        "Email / Calendar",
+        "gpt-5.6",
+        store,
+        "task-email-calendar-001",
+    )
+
+    tool_names = [
+        getattr(tool, "name", tool.__class__.__name__)
+        for tool in specialist.tools
+    ]
+
+    assert "gmail_search_messages" in tool_names
+    assert "gmail_read_message" in tool_names
+    assert "calendar_list_events" in tool_names
+
+    forbidden = {
+        "gmail_send",
+        "gmail_delete",
+        "gmail_modify",
+        "calendar_create_event",
+        "calendar_update_event",
+        "calendar_delete_event",
+        "ShellTool",
+        "LocalShellTool",
+        "ComputerTool",
+    }
+
+    assert forbidden.isdisjoint(tool_names)
+
+
+@pytest.mark.parametrize(
+    "specialist_name",
+    [
+        "Developer",
+        "QA",
+        "UIUX",
+        "CodeReviewer",
+        "Executive Assistant",
+        "Research / News",
+    ],
+)
+def test_non_email_specialists_do_not_get_google_tools(
+    tmp_path: Path,
+    specialist_name: str,
+) -> None:
+    store = make_store(tmp_path)
+
+    specialist = build_specialist(
+        specialist_name,
+        "gpt-5.6",
+        store,
+        "task-no-google-001",
+    )
+
+    tool_names = [
+        getattr(tool, "name", tool.__class__.__name__)
+        for tool in specialist.tools
+    ]
+
+    assert "gmail_search_messages" not in tool_names
+    assert "gmail_read_message" not in tool_names
+    assert "calendar_list_events" not in tool_names
+
+
+def test_email_calendar_is_seeded_idle(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+    store.seed_defaults()
+
+    email_calendar = next(
+        row for row in store.list_agents()
+        if row["name"] == "Email / Calendar"
+    )
+
+    assert email_calendar["status"] == "idle"
+    assert "read-only Gmail" in email_calendar["description"]
