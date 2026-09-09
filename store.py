@@ -119,7 +119,7 @@ class TaskStore:
             ("Email / Calendar", "placeholder", "Placeholder; no external writes enabled."),
             ("HR & Compliance", "placeholder", "Placeholder; local policy review only."),
             ("Job Tracker", "placeholder", "Placeholder; local tracking only."),
-            ("Research / News", "placeholder", "Placeholder; research connector not configured."),
+            ("Research / News", "idle", "Performs read-only public web research using the hosted web-search connector."),
             ("Command Center Updater", "placeholder", "Placeholder; updates local state only."),
         ]
         with self._lock, self._connect() as db:
