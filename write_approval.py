@@ -47,12 +47,55 @@ class VerifiedEditRequest:
         ).hexdigest()
 
 
+@dataclass(frozen=True)
+class VerifiedFileWriteRequest:
+    task_id: str
+    capability: str
+    path: str
+    repository_path: str
+    verification_profile: str
+    content: str
+    expected_sha256: str
+
+    def canonical_payload(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "capability": self.capability,
+            "path": self.path,
+            "repository_path": self.repository_path,
+            "verification_profile": self.verification_profile,
+            "content_sha256": hashlib.sha256(
+                self.content.encode("utf-8")
+            ).hexdigest(),
+            "expected_sha256": self.expected_sha256,
+        }
+
+    def fingerprint(self) -> str:
+        payload = json.dumps(
+            self.canonical_payload(),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+        return hashlib.sha256(
+            payload.encode("utf-8")
+        ).hexdigest()
+
+
+VerifiedApprovalRequest = VerifiedEditRequest | VerifiedFileWriteRequest
+
+
 def approval_action_for_request(
-    request: VerifiedEditRequest,
+    request: VerifiedApprovalRequest,
 ) -> str:
+    if isinstance(request, VerifiedFileWriteRequest):
+        action_type = "verified_file_write"
+    else:
+        action_type = "verified_edit"
+
     return json.dumps(
         {
-            "type": "verified_edit",
+            "type": action_type,
             "fingerprint": request.fingerprint(),
             "request": request.canonical_payload(),
         },
@@ -63,7 +106,7 @@ def approval_action_for_request(
 
 def validate_stored_approval(
     approval_row: dict[str, Any],
-    request: VerifiedEditRequest,
+    request: VerifiedApprovalRequest,
 ) -> ApprovalRecord:
     if not approval_row:
         raise PermissionError("Approval record was not found.")
@@ -80,7 +123,7 @@ def validate_stored_approval(
 
     if approval_row.get("action") != expected_action:
         raise PermissionError(
-            "Approval does not match the exact verified edit request."
+            "Approval does not match the exact verified request."
         )
 
     decided_at = approval_row.get("decided_at")

@@ -4,6 +4,7 @@ import pytest
 
 from write_approval import (
     VerifiedEditRequest,
+    VerifiedFileWriteRequest,
     approval_action_for_request,
     validate_stored_approval,
 )
@@ -160,3 +161,90 @@ def test_missing_decision_timestamp_is_rejected() -> None:
 
     with pytest.raises(PermissionError):
         validate_stored_approval(row, request)
+
+
+def make_file_write_request(
+    *,
+    content: str = "def add(a, b):\n    return a + b\n",
+    expected_sha256: str = "a" * 64,
+    path: str = r"D:\Shared-Local-Execution-Engine-Sandbox\app.py",
+) -> VerifiedFileWriteRequest:
+    return VerifiedFileWriteRequest(
+        task_id="task-file-write-001",
+        capability="write_text_file",
+        path=path,
+        repository_path=r"D:\Shared-Local-Execution-Engine-Sandbox",
+        verification_profile="sandbox_pytest",
+        content=content,
+        expected_sha256=expected_sha256,
+    )
+
+
+def make_approved_file_write_row(
+    request: VerifiedFileWriteRequest,
+) -> dict[str, object]:
+    return {
+        "id": "approval-file-write-001",
+        "task_id": request.task_id,
+        "action": approval_action_for_request(request),
+        "status": "approved",
+        "decided_at": "2026-09-09T00:00:00+00:00",
+        "decided_by": "test-user",
+    }
+
+
+def test_file_write_approval_uses_distinct_action_type() -> None:
+    request = make_file_write_request()
+
+    action = approval_action_for_request(request)
+
+    assert '"type":"verified_file_write"' in action
+    assert '"content_sha256"' in action
+    assert '"expected_sha256"' in action
+
+
+def test_exact_file_write_approval_validates() -> None:
+    request = make_file_write_request()
+    row = make_approved_file_write_row(request)
+
+    approval = validate_stored_approval(row, request)
+
+    assert approval.task_id == request.task_id
+    assert approval.capability == "write_text_file"
+    assert approval.status == "approved"
+
+
+def test_modified_file_content_invalidates_approval() -> None:
+    original = make_file_write_request()
+    row = make_approved_file_write_row(original)
+
+    modified = make_file_write_request(
+        content="def add(a, b):\n    return a - b\n",
+    )
+
+    with pytest.raises(PermissionError):
+        validate_stored_approval(row, modified)
+
+
+def test_modified_expected_sha256_invalidates_file_write_approval() -> None:
+    original = make_file_write_request()
+    row = make_approved_file_write_row(original)
+
+    modified = make_file_write_request(
+        expected_sha256="b" * 64,
+    )
+
+    with pytest.raises(PermissionError):
+        validate_stored_approval(row, modified)
+
+
+def test_modified_file_write_path_invalidates_approval() -> None:
+    original = make_file_write_request()
+    row = make_approved_file_write_row(original)
+
+    modified = make_file_write_request(
+        path=r"D:\Shared-Local-Execution-Engine-Sandbox\other.py",
+    )
+
+    with pytest.raises(PermissionError):
+        validate_stored_approval(row, modified)
