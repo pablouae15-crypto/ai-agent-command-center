@@ -44,7 +44,7 @@ def test_create_exact_approval_stores_canonical_action(tmp_path: Path) -> None:
 
     assert approval["task_id"] == task["id"]
     assert approval["action"] == approval_action_for_request(request)
-    assert approval["reason"] == "Verified edit approval"
+    assert approval["reason"] == "Verified request approval"
     assert approval["status"] == "pending"
 
 

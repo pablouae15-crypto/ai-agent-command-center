@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from write_approval import VerifiedEditRequest, approval_action_for_request
+from write_approval import VerifiedApprovalRequest, approval_action_for_request
 
 
 PRIORITIES = ("Critical", "High", "Medium", "Low")
@@ -241,8 +241,8 @@ class TaskStore:
 
     def create_exact_approval(
         self,
-        request: VerifiedEditRequest,
-        reason: str = "Verified edit approval",
+        request: VerifiedApprovalRequest,
+        reason: str = "Verified request approval",
     ) -> dict[str, Any]:
         task = self.get_task(request.task_id)
         if not task:
@@ -281,7 +281,7 @@ class TaskStore:
 
         self.add_activity(
             "approval.requested",
-            "Exact verified-edit approval requested",
+            "Exact verified approval requested",
             task_id=request.task_id,
             agent_name=task["agent_name"],
             payload={
