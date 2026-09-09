@@ -206,3 +206,67 @@ def test_recurring_job_rejects_placeholder_agent(
             interval_seconds=3600,
             next_run_at="2099-01-01T08:00:00+00:00",
         )
+
+
+def test_seed_defaults_promotes_existing_placeholder_agent(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+    store.seed_defaults()
+
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE agent_status SET status='placeholder' WHERE name=?",
+            ("Executive Assistant",),
+        )
+
+    before = next(
+        row for row in store.list_agents()
+        if row["name"] == "Executive Assistant"
+    )
+    assert before["status"] == "placeholder"
+
+    store.seed_defaults()
+
+    after = next(
+        row for row in store.list_agents()
+        if row["name"] == "Executive Assistant"
+    )
+    assert after["status"] == "idle"
+
+
+def test_seed_defaults_preserves_non_placeholder_runtime_status(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+    store.seed_defaults()
+
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE agent_status SET status='working' WHERE name=?",
+            ("Developer",),
+        )
+
+    store.seed_defaults()
+
+    developer = next(
+        row for row in store.list_agents()
+        if row["name"] == "Developer"
+    )
+
+    assert developer["status"] == "working"
+
+
+def test_seed_defaults_disables_legacy_placeholder_heartbeat(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+    store.seed_defaults()
+
+    heartbeat = next(
+        row for row in store.list_jobs()
+        if row["name"] == "command-center-heartbeat"
+    )
+
+    assert heartbeat["agent_name"] == "Command Center Updater"
+    assert heartbeat["enabled"] == 0

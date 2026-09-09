@@ -127,15 +127,28 @@ class TaskStore:
                 db.execute(
                     """INSERT INTO agent_status(name,status,description,last_seen_at)
                        VALUES(?,?,?,?)
-                       ON CONFLICT(name) DO UPDATE SET description=excluded.description""",
+                       ON CONFLICT(name) DO UPDATE SET
+                           status=CASE
+                               WHEN agent_status.status='placeholder'
+                               THEN excluded.status
+                               ELSE agent_status.status
+                           END,
+                           description=excluded.description""",
                     (name, status, description, now),
                 )
+            db.execute(
+                """UPDATE recurring_jobs
+                   SET enabled=0
+                   WHERE name='command-center-heartbeat'
+                     AND agent_name='Command Center Updater'"""
+            )
+
             existing = db.execute("SELECT COUNT(*) AS count FROM recurring_jobs").fetchone()["count"]
             if existing == 0:
                 db.execute(
                     """INSERT INTO recurring_jobs
-                       (id,name,agent_name,prompt,interval_seconds,next_run_at,created_at)
-                       VALUES(?,?,?,?,?,?,?)""",
+                       (id,name,agent_name,prompt,interval_seconds,next_run_at,enabled,created_at)
+                       VALUES(?,?,?,?,?,?,?,?)""",
                     (
                         str(uuid.uuid4()),
                         "command-center-heartbeat",
@@ -143,6 +156,7 @@ class TaskStore:
                         "Review local task and approval counts and report any stale work.",
                         300,
                         now,
+                        0,
                         now,
                     ),
                 )
