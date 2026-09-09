@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 from datetime import datetime, timezone
 
-from agent import run_orchestrator
+from agent import run_specialist
 from config import Settings
 from store import TaskStore
 
@@ -53,7 +53,7 @@ class Runtime:
                 task = self.store.claim_next_task()
                 if task:
                     try:
-                        output = await run_orchestrator(
+                        output = await run_specialist(
                             task,
                             self.settings.openai_model,
                             self.store,

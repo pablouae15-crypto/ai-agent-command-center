@@ -299,6 +299,95 @@ def build_orchestrator(model: str, store: TaskStore, task_id: str) -> Agent:
     )
 
 
+SPECIALIST_INSTRUCTIONS = {
+    "Developer": (
+        "Act as the Developer specialist. Focus on implementation, debugging, refactoring, "
+        "small controlled code changes, and evidence-based verification. "
+        "Do not broaden scope beyond the assigned task."
+    ),
+    "QA": (
+        "Act as the QA specialist. Focus on test design, regression analysis, defect reproduction, "
+        "verification evidence, and identifying missing test coverage. "
+        "Prefer inspection and testing over code changes unless an exact approved edit is required."
+    ),
+    "UIUX": (
+        "Act as the UIUX specialist. Focus on interface structure, usability, accessibility, "
+        "clarity, consistency, and implementation details relevant to the assigned task. "
+        "Do not make cosmetic changes unrelated to the task."
+    ),
+    "CodeReviewer": (
+        "Act as the CodeReviewer specialist. Focus on correctness, maintainability, security, "
+        "readability, architectural consistency, and regression risk. "
+        "Prefer review and evidence over editing unless an exact approved edit is required."
+    ),
+}
+
+
+def build_specialist(
+    specialist_name: str,
+    model: str,
+    store: TaskStore,
+    task_id: str,
+) -> Agent:
+    try:
+        specialist_instruction = SPECIALIST_INSTRUCTIONS[specialist_name]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unknown or unauthorized specialist agent: {specialist_name}"
+        ) from exc
+
+    base_agent = build_orchestrator(model, store, task_id)
+
+    return Agent(
+        name=f"Command Center {specialist_name}",
+        model=model,
+        instructions=(
+            base_agent.instructions
+            + " "
+            + specialist_instruction
+        ),
+        tools=base_agent.tools,
+    )
+
+
+async def run_specialist(
+    task: dict[str, Any],
+    model: str,
+    store: TaskStore,
+) -> str:
+    specialist_name = str(task.get("agent_name") or "").strip()
+
+    if specialist_name == "Orchestrator":
+        return await run_orchestrator(task, model, store)
+
+    if specialist_name not in SPECIALIST_INSTRUCTIONS:
+        raise ValueError(
+            f"Task agent is not authorized for execution: {specialist_name}"
+        )
+
+    if not api_key_configured():
+        raise RuntimeError("OPENAI_API_KEY is not configured")
+
+    if not execution_engine.ready:
+        raise RuntimeError(
+            "Shared Local Execution Engine is disabled or not ready."
+        )
+
+    result = await Runner.run(
+        build_specialist(
+            specialist_name,
+            model,
+            store,
+            str(task["id"]),
+        ),
+        task["description"],
+        max_turns=10,
+    )
+
+    output = getattr(result, "final_output", None)
+    return str(output if output is not None else result)
+
+
 async def run_orchestrator(
     task: dict[str, Any],
     model: str,

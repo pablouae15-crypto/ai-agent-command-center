@@ -111,6 +111,10 @@ class TaskStore:
         now = utc_now()
         agents = [
             ("Orchestrator", "idle", "Coordinates safe local tasks and proposes next actions."),
+            ("Developer", "idle", "Implements, debugs, and refactors code through approved local tools only."),
+            ("QA", "idle", "Designs and runs tests, verifies regressions, and analyzes defects."),
+            ("UIUX", "idle", "Reviews and improves interface structure, usability, and implementation."),
+            ("CodeReviewer", "idle", "Reviews code quality, maintainability, correctness, and security."),
             ("Executive Assistant", "placeholder", "Placeholder; local planning only until connectors are configured."),
             ("Email / Calendar", "placeholder", "Placeholder; no external writes enabled."),
             ("HR & Compliance", "placeholder", "Placeholder; local policy review only."),
