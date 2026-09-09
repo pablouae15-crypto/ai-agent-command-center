@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -225,22 +226,20 @@ def gmail_read_message(
 
 @function_tool
 def calendar_list_events(
-    time_min: str,
     max_results: int = 10,
 ) -> str:
     """List upcoming Google Calendar events using read-only access."""
-    if not time_min.strip():
-        raise ValueError("time_min is required.")
     if max_results < 1 or max_results > 25:
         raise ValueError("max_results must be between 1 and 25.")
 
     service = build_calendar_readonly_service()
+    time_min = datetime.now(timezone.utc).isoformat()
 
     response = (
         service.events()
         .list(
             calendarId="primary",
-            timeMin=time_min.strip(),
+            timeMin=time_min,
             maxResults=max_results,
             singleEvents=True,
             orderBy="startTime",
