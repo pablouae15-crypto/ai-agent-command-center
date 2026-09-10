@@ -27,13 +27,6 @@ execution_engine = ExecutionEngineAdapter(
     audit_log_path=settings.execution_engine_audit_log,
 )
 
-execution_engine = ExecutionEngineAdapter(
-    enabled=settings.execution_engine_enabled,
-    authorized_roots=list(settings.execution_engine_workspace_roots),
-    audit_log_path=settings.execution_engine_audit_log,
-)
-
-
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await runtime.start()
@@ -81,9 +74,6 @@ def health() -> dict:
         "execution_engine_enabled": settings.execution_engine_enabled,
         "execution_engine_ready": execution_engine.ready,
         "authorized_workspace_count": len(settings.execution_engine_workspace_roots),
-        "execution_engine_enabled": settings.execution_engine_enabled,
-        "execution_engine_ready": execution_engine.ready,
-        "authorized_workspace_count": len(settings.execution_engine_workspace_roots),
     }
 
 
@@ -96,13 +86,6 @@ def execution_status() -> dict:
         "authorized_workspace_count": len(settings.execution_engine_workspace_roots),
     }
 
-@app.get("/api/execution/status")
-def execution_status() -> dict:
-    return {
-        "enabled": settings.execution_engine_enabled,
-        "ready": execution_engine.ready,
-        "authorized_workspace_count": len(settings.execution_engine_workspace_roots),
-    }
 @app.get("/api/summary")
 def summary() -> dict:
     return {
@@ -111,7 +94,7 @@ def summary() -> dict:
         "tasks": store.list_tasks(25),
         "approvals": store.list_approvals(),
         "activity": store.list_activity(30),
-        "execution_note": "Agent execution is opt-in via ENABLE_AGENT_RUNS=true; external connectors are not enabled in Phase 1.",
+        "execution_note": "Agent execution is opt-in via ENABLE_AGENT_RUNS=true; enabled connectors remain capability-scoped and approval-gated where required.",
     }
 
 
