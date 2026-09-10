@@ -36,15 +36,40 @@
    <div class="card"><h2>Personal AI Assistant</h2><form id="assistant-form"><textarea id="assistant-request" name="request" placeholder="Tell your Personal AI Assistant what you need..." required></textarea><select id="assistant-priority" name="priority"><option>Medium</option><option>Critical</option><option>High</option><option>Low</option></select><button id="assistant-submit" type="submit">Send to Assistant</button></form><div id="assistant-result" class="muted" style="margin-top:10px">Ready for your request.</div><p class="muted">Requests are handed to the Orchestrator and remain subject to approval and execution controls.</p></div>
     <div class="card full"><h2>Recent activity</h2><div id="activity" class="activity"></div></div>
   </section>
+  <div id="task-detail-modal" style="display:none;position:fixed;inset:0;background:#0008;padding:40px;z-index:20">
+    <div class="card" style="max-width:760px;margin:auto">
+      <button id="task-detail-close" type="button">Close</button>
+      <pre id="task-detail-content" style="white-space:pre-wrap"></pre>
+    </div>
+  </div>
 </main>
 <script>
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function taskCreatedAt(task){
+  const value = task?.created_at || '';
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+function openTaskDetail(taskId){
+  const modal = document.querySelector('#task-detail-modal');
+  const content = document.querySelector('#task-detail-content');
+  const rows = Array.from(document.querySelectorAll('[data-task-id]'));
+  const row = rows.find(item => item.dataset.taskId === String(taskId));
+  modal.dataset.taskId = String(taskId);
+  content.textContent = row ? row.innerText : `Task ${taskId}`;
+  modal.style.display = 'block';
+}
+function closeTaskDetail(){
+  document.querySelector('#task-detail-modal').style.display = 'none';
+}
+document.querySelector('#task-detail-close').addEventListener('click', closeTaskDetail);
+
 async function refresh(){
   const res = await fetch('/api/summary'); const d = await res.json();
   const counts = d.task_counts || {};
   document.querySelector('#health').textContent = d.execution_note.includes('opt-in') ? 'healthy Â· execution opt-in' : 'healthy';
   document.querySelector('#metrics').innerHTML = [['Queued',counts.queued||0],['Running',counts.running||0],['Completed',counts.completed||0],['Approvals',d.approvals_waiting||0]].map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="metric">${x[1]}</div></div>`).join('');
-  document.querySelector('#tasks').innerHTML = (d.tasks||[]).map(t=>`<tr><td class="${t.priority.toLowerCase()}">${esc(t.priority)}</td><td><strong>${esc(t.title)}</strong><br><span class="muted">${esc(t.description).slice(0,120)}</span></td><td>${esc(t.agent_name)}</td><td class="status">${esc(t.status)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">No tasks</td></tr>';
+  document.querySelector('#tasks').innerHTML = (d.tasks||[]).sort((a,b)=>{ const aCreated = taskCreatedAt(a); const bCreated = taskCreatedAt(b); return bCreated - aCreated; }).map(t=>`<tr data-task-id="${esc(t.id)}" data-created-at="${esc(t.created_at || '')}"><td class="${t.priority.toLowerCase()}">${esc(t.priority)}</td><td><button type="button" data-task-id="${esc(t.id)}" onclick="openTaskDetail('${esc(t.id)}')">View</button> <strong>${esc(t.title)}</strong><br><span class="muted">${esc(t.description).slice(0,120)}</span></td><td>${esc(t.agent_name)}</td><td class="status">${esc(t.status)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">No tasks</td></tr>';
   document.querySelector('#agents').innerHTML = (d.agents||[]).map(a=>`<tr><td>${esc(a.name)}</td><td>${esc(a.status)}</td><td class="muted">${new Date(a.last_seen_at).toLocaleString()}</td></tr>`).join('');
   document.querySelector('#approvals').innerHTML = (d.approvals||[]).map(a=>`
     <div style="padding:12px 0;border-bottom:1px solid #2c425d">
