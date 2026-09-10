@@ -28,6 +28,16 @@
 <main>
   <header><div><h1>AI Agent Command Center</h1><div class="muted">Approval-first local control plane for a 24/7 orchestrator</div></div><div id="health" class="pill">checking healthâ€¦</div></header>
   <section id="metrics" class="grid"></section>
+  <section class="card" id="dashboard-filter-controls">
+    <h2>Dashboard filters</h2>
+    <select id="task-priority-filter"><option value="all">All priorities</option></select>
+    <select id="task-owner-filter"><option value="all">All owners</option></select>
+    <select id="task-status-filter"><option value="all">All statuses</option></select>
+    <input id="agent-search-filter" placeholder="Search agents" />
+    <select id="agent-status-filter"><option value="all">All agent statuses</option></select>
+    <select id="activity-sort-filter"><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select>
+  </section>
+
   <section class="columns">
     <div class="card"><h2>Tasks</h2><div style="overflow:auto"><table><thead><tr><th>Priority</th><th>Task</th><th>Agent</th><th>Status</th></tr></thead><tbody id="tasks"></tbody></table></div></div>
     <div class="card"><h2>Approvals waiting</h2><div id="approvals" class="muted">None</div></div>
@@ -44,6 +54,20 @@
   </div>
 </main>
 <script>
+const STORAGE_KEYS = {
+  taskPriority: 'dashboard.task.priority',
+  taskOwner: 'dashboard.task.owner',
+  taskStatus: 'dashboard.task.status',
+  agentSearch: 'dashboard.agent.search',
+  agentStatus: 'dashboard.agent.status',
+  activitySort: 'dashboard.activity.sort'
+};
+function saveDashboardSetting(key, value){
+  localStorage.setItem(key, value);
+}
+function loadDashboardSetting(key, fallback){
+  return localStorage.getItem(key) || fallback;
+}
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function taskCreatedAt(task){
   const value = task?.created_at || '';
