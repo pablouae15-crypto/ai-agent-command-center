@@ -13,6 +13,7 @@ from agent import api_key_configured
 from config import settings
 from runtime import Runtime
 from store import TaskStore
+from personal_assistant import PersonalAssistantRequest, handoff_to_command_center
 from execution_adapter import ExecutionEngineAdapter
 from execution_adapter import ExecutionEngineAdapter
 
@@ -195,6 +196,24 @@ def summary() -> dict:
         "activity": store.list_activity(30),
         "execution_note": "Agent execution is opt-in via ENABLE_AGENT_RUNS=true; enabled connectors remain capability-scoped and approval-gated where required.",
     }
+
+
+@app.post("/api/assistant/handoff", status_code=201)
+def assistant_handoff(request: PersonalAssistantRequest) -> dict:
+    inferred_level = classify_task_side_effect(
+        request.title or "",
+        request.request,
+        request.side_effect_level,
+    )
+
+    safe_request = request.model_copy(
+        update={
+            "side_effect_level": inferred_level,
+        }
+    )
+
+    result = handoff_to_command_center(store, safe_request)
+    return result.model_dump()
 
 
 @app.get("/api/tasks")
