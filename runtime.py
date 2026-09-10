@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 from datetime import datetime, timezone
 
+from agent import SpecialistOutcome
 from agent import run_specialist
 from config import Settings
 from store import TaskStore
@@ -58,6 +59,54 @@ class Runtime:
                             self.settings.openai_model,
                             self.store,
                         )
+
+                        if isinstance(output, SpecialistOutcome):
+                            persisted_output = output.model_dump()
+
+                            if output.status == "completed":
+                                self.store.complete_task(
+                                    task["id"],
+                                    {
+                                        "output": persisted_output,
+                                        "completed_at": datetime.now(
+                                            timezone.utc
+                                        ).isoformat(),
+                                    },
+                                )
+                                continue
+
+                            evidence_text = (
+                                f" Evidence: {', '.join(output.evidence)}"
+                                if output.evidence
+                                else ""
+                            )
+
+                            if output.status == "failed":
+                                self.store.fail_task(
+                                    task["id"],
+                                    f"{output.summary}{evidence_text}",
+                                )
+                                continue
+
+                            if output.status == "blocked":
+                                self.store.block_task(
+                                    task["id"],
+                                    output.summary,
+                                )
+                                continue
+
+                            if output.status == "partial":
+                                self.store.partial_task(
+                                    task["id"],
+                                    persisted_output,
+                                    output.summary,
+                                )
+                                continue
+
+                            raise RuntimeError(
+                                f"Unsupported specialist outcome status: {output.status}"
+                            )
+
                         self.store.complete_task(task["id"], {"output": output, "completed_at": datetime.now(timezone.utc).isoformat()})
                     except Exception as exc:  # noqa: BLE001 - the task must be audited as failed.
                         self.store.fail_task(task["id"], str(exc))
