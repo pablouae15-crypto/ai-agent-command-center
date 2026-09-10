@@ -1,8 +1,8 @@
 [
-  {"name":"Executive Assistant","status":"placeholder","external_writes_enabled":false,"description":"Local planning, summaries, and task triage."},
-  {"name":"Email / Calendar","status":"placeholder","external_writes_enabled":false,"description":"Connector placeholder; no messages or events are sent or changed."},
-  {"name":"HR & Compliance","status":"placeholder","external_writes_enabled":false,"description":"Local policy review placeholder."},
-  {"name":"Job Tracker","status":"placeholder","external_writes_enabled":false,"description":"Local application tracking placeholder."},
-  {"name":"Research / News","status":"placeholder","external_writes_enabled":false,"description":"Research connector placeholder."},
-  {"name":"Command Center Updater","status":"placeholder","external_writes_enabled":false,"description":"Recurring local heartbeat and state summary."}
+  {"name":"Executive Assistant","status":"idle","external_writes_enabled":false,"description":"Plans, summarizes, organizes, and coordinates approved work inside the Command Center."},
+  {"name":"Email / Calendar","status":"idle","external_writes_enabled":false,"description":"Provides read-only Gmail search/read and Google Calendar event listing."},
+  {"name":"HR & Compliance","status":"idle","external_writes_enabled":false,"description":"Provides controlled HR policy, process, workforce, and compliance analysis."},
+  {"name":"Job Tracker","status":"idle","external_writes_enabled":false,"description":"Tracks job opportunities, applications, follow-ups, and duplicate-submission risk."},
+  {"name":"Research / News","status":"idle","external_writes_enabled":false,"description":"Performs read-only public web research using the hosted web-search connector."},
+  {"name":"Command Center Updater","status":"placeholder","external_writes_enabled":false,"description":"Disabled placeholder for recurring local heartbeat and state summary."}
 ]

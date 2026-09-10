@@ -1,18 +1,18 @@
-# AI Agent Command Center — Phase 1 MVP
+# AI Agent Command Center
 
-This is a small Windows-friendly local service for a 24/7 AI agent command center. It uses one OpenAI Agents SDK orchestrator, persistent SQLite state, a simple recurring-job scheduler, an approval queue, JSONL audit logs, and a local web dashboard. The Agents SDK uses the Responses API path for the orchestrator run.
+This is a Windows-friendly local AI Agent Command Center with an orchestrator, routed specialist agents, persistent SQLite state, controlled local execution, approval workflows, connector access, JSONL audit logs, and a local web dashboard.
 
 ## Safety defaults
 
-- `ENABLE_AGENT_RUNS=false` by default, so startup and smoke tests do not spend API credits.
+- Agent execution is controlled by `ENABLE_AGENT_RUNS`. The current local configuration has it enabled; change this setting deliberately because model-backed runs may consume API credits.
 - Tasks marked `external` or `destructive` automatically require human approval.
-- No email, calendar, HR, job-board, research, or file-writing connectors are enabled in Phase 1.
+- Email / Calendar and Research / News are available through controlled, capability-scoped connectors. HR & Compliance and Job Tracker are active specialists. External or destructive actions still require approval.
 - `.env` is ignored by Git. Keep the API key in `.env`; never commit it.
 
 ## Run locally on Windows
 
 ```powershell
-cd "C:\Users\pablo\OneDrive\Desktop\Paolo\AI Agent Command Center"
+cd "D:\AI-Agent-Command-Center"
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -e .
@@ -21,38 +21,26 @@ python main.py
 
 Open [http://127.0.0.1:8421](http://127.0.0.1:8421). Readiness is available at [http://127.0.0.1:8421/health](http://127.0.0.1:8421/health).
 
-Agent execution is intentionally off until you explicitly set `ENABLE_AGENT_RUNS=true` in `.env` and restart the service. The service will then use `OPENAI_MODEL` and the locally stored `OPENAI_API_KEY` for orchestrator runs. API usage is billed separately from ChatGPT Plus.
+Agent execution is controlled by `ENABLE_AGENT_RUNS` in `.env`. The current local configuration has agent execution enabled. The service uses `OPENAI_MODEL` and the locally stored `OPENAI_API_KEY` for model-backed runs. Local execution is separately controlled by `EXECUTION_ENGINE_ENABLED` and authorized workspace roots.
 
-## Docker
+## Tests
 
-```powershell
-cd "C:\Users\pablo\OneDrive\Desktop\Paolo\AI Agent Command Center"
-docker compose up --build -d
-```
-
-The compose file keeps execution disabled by default and persists `data` and `logs` on the host.
-
-## Smoke test
-
-After installing dependencies:
+Run the full regression suite:
 
 ```powershell
-python tests\smoke_test.py
+Set-Location "D:\AI-Agent-Command-Center"
+& ".\.venv\Scripts\python.exe" -m pytest -q
 ```
 
-It verifies `/health`, SQLite persistence, the task API, and the approval gate without using the OpenAI API.
+Current verified baseline: `144 passed`.
+
+The suite covers API behavior, approvals, structured task outcomes, specialist routing, controlled execution, connector behavior, dashboard behavior, and regression protection.
 
 ## Windows autostart
 
 For a local-process fallback, register the included Scheduled Task at logon:
 
 ```powershell
-cd "C:\Users\pablo\OneDrive\Desktop\Paolo\AI Agent Command Center"
+cd "D:\AI-Agent-Command-Center"
 powershell -ExecutionPolicy Bypass -File scripts\register-startup-task.ps1
 ```
-
-For a machine-wide service, use Docker Desktop with `restart: unless-stopped` or later wrap the process with a Windows service manager after Phase 1 has been exercised.
-
-## Phase 2 candidates
-
-Add one connector at a time (for example, read-only calendar or email first), persist connector credentials outside source control, add per-connector scopes, approval expiry, retries/backoff, metrics, backups, and a real multi-agent handoff only when the single orchestrator contract is proven.
