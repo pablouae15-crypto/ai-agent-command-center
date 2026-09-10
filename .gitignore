@@ -19,3 +19,14 @@ google_credentials.json
 google_client_secret*.json
 google_token*.json
 token.json
+
+# Local runtime database
+command-center.db
+
+# Local checkpoints and manual backups
+checkpoints/
+*.pre-*.py
+*.post-*.py
+static/*.pre-*.html
+static/*.phase*-backup.html
+tests/backup_*.py

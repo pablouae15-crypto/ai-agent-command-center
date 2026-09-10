@@ -82,7 +82,46 @@ class VerifiedFileWriteRequest:
         ).hexdigest()
 
 
-VerifiedApprovalRequest = VerifiedEditRequest | VerifiedFileWriteRequest
+@dataclass(frozen=True)
+class VerifiedGmailDraftRequest:
+    task_id: str
+    capability: str
+    to: tuple[str, ...]
+    subject: str
+    body: str
+    cc: tuple[str, ...] = ()
+    bcc: tuple[str, ...] = ()
+
+    def canonical_payload(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "capability": self.capability,
+            "to": list(self.to),
+            "cc": list(self.cc),
+            "bcc": list(self.bcc),
+            "subject": self.subject,
+            "body_sha256": hashlib.sha256(
+                self.body.encode("utf-8")
+            ).hexdigest(),
+        }
+
+    def fingerprint(self) -> str:
+        payload = json.dumps(
+            self.canonical_payload(),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+        return hashlib.sha256(
+            payload.encode("utf-8")
+        ).hexdigest()
+
+
+VerifiedApprovalRequest = (
+    VerifiedEditRequest
+    | VerifiedFileWriteRequest
+    | VerifiedGmailDraftRequest
+)
 
 
 def approval_action_for_request(
@@ -90,6 +129,8 @@ def approval_action_for_request(
 ) -> str:
     if isinstance(request, VerifiedFileWriteRequest):
         action_type = "verified_file_write"
+    elif isinstance(request, VerifiedGmailDraftRequest):
+        action_type = "verified_gmail_draft"
     else:
         action_type = "verified_edit"
 

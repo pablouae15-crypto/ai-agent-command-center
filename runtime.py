@@ -2,15 +2,67 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
+import re
 from datetime import datetime, timezone
 
 from agent import SpecialistOutcome
 from agent import run_specialist
+from agent import execute_approved_gmail_draft
+from agent import execute_approved_verified_edit
 from config import Settings
 from store import TaskStore
+from write_approval import VerifiedEditRequest
+
+
+def _verified_edit_request_from_task(
+    task: dict,
+    metadata: dict,
+) -> VerifiedEditRequest | None:
+    text = str(
+        metadata.get("original_request")
+        or task.get("description")
+        or ""
+    ).strip()
+
+    pattern = re.compile(
+        r'In\s+(?P<path>[A-Za-z]:\\[^,\r\n]+),\s*'
+        r'replace exactly\s+"(?P<old>.*?)"\s+with\s+"(?P<new>.*?)"\.\s*'
+        r'Use the approved verified replace_text workflow with repository path\s+'
+        r'(?P<repo>[A-Za-z]:\\.+?)\s+and sandbox_pytest verification\.',
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    match = pattern.search(text)
+
+    if not match:
+        return None
+
+    path = match.group("path").strip()
+    repository_path = match.group("repo").strip()
+
+    sandbox_root = r"D:\Shared-Local-Execution-Engine-Sandbox"
+
+    if not path.lower().startswith(sandbox_root.lower() + "\\"):
+        return None
+
+    if repository_path.lower() != sandbox_root.lower():
+        return None
+
+    return VerifiedEditRequest(
+        task_id=str(task["id"]),
+        capability="replace_text",
+        path=path,
+        repository_path=repository_path,
+        verification_profile="sandbox_pytest",
+        old_text=match.group("old"),
+        new_text=match.group("new"),
+        expected_replacements=1,
+    )
 
 
 def _specialist_output_indicates_failure(output: str) -> bool:
+    """Detect explicit specialist refusal/no-action outcomes."""
     normalized = output.lower().replace("’", "'")
 
     failure_markers = (
@@ -70,6 +122,7 @@ def _specialist_output_indicates_failure(output: str) -> bool:
 
     return explicit_refusal or insufficient_evidence
 
+
 class Runtime:
     def __init__(self, store: TaskStore, settings: Settings):
         self.store = store
@@ -114,11 +167,150 @@ class Runtime:
                 task = self.store.claim_next_task()
                 if task:
                     try:
-                        output = await run_specialist(
-                            task,
-                            self.settings.openai_model,
-                            self.store,
+                        metadata = json.loads(
+                            task.get("metadata_json") or "{}"
                         )
+
+                        if (
+                            metadata.get("workflow_type")
+                            == "native_gmail_draft"
+                        ):
+                            approval_id = str(
+                                task.get("approval_id") or ""
+                            ).strip()
+
+                            if not approval_id:
+                                raise PermissionError(
+                                    "Native Gmail draft task has no approval ID."
+                                )
+
+                            approval = self.store.get_approval(
+                                approval_id
+                            )
+
+                            if not approval:
+                                raise PermissionError(
+                                    "Native Gmail draft approval was not found."
+                                )
+
+                            preview = json.loads(
+                                approval.get(
+                                    "display_payload_json"
+                                )
+                                or "{}"
+                            )
+
+                            if preview.get("type") != "gmail_draft":
+                                raise PermissionError(
+                                    "Approval does not contain a Gmail draft payload."
+                                )
+
+                            output = execute_approved_gmail_draft(
+                                store=self.store,
+                                task_id=str(task["id"]),
+                                approval_id=approval_id,
+                                to=list(preview.get("to") or []),
+                                cc=list(preview.get("cc") or []),
+                                bcc=list(preview.get("bcc") or []),
+                                subject=str(
+                                    preview.get("subject") or ""
+                                ),
+                                body=str(
+                                    preview.get("body") or ""
+                                ),
+                            )
+                        elif task.get("approval_id"):
+                            approval_id = str(
+                                task.get("approval_id") or ""
+                            ).strip()
+
+                            if not approval_id:
+                                raise PermissionError(
+                                    "Approved task has no approval ID."
+                                )
+
+                            approval = self.store.get_approval(
+                                approval_id
+                            )
+
+                            if not approval:
+                                raise PermissionError(
+                                    "Approved task approval record was not found."
+                                )
+
+                            if approval.get("status") != "approved":
+                                raise PermissionError(
+                                    "Approval is not in approved state."
+                                )
+
+                            preview = json.loads(
+                                approval.get(
+                                    "display_payload_json"
+                                )
+                                or "{}"
+                            )
+
+                            if (
+                                not preview
+                                and approval.get("action") == task.get("title")
+                            ):
+                                exact_request = _verified_edit_request_from_task(
+                                    task,
+                                    metadata,
+                                )
+
+                                if exact_request is not None:
+                                    self.store.create_exact_approval(
+                                        exact_request,
+                                        reason="Execute this exact verified edit",
+                                    )
+                                    continue
+
+                            if preview.get("type") == "verified_edit_execution":
+                                output = execute_approved_verified_edit(
+                                    store=self.store,
+                                    task_id=str(task["id"]),
+                                    approval_id=approval_id,
+                                    path=str(preview.get("path") or ""),
+                                    repository_path=str(
+                                        preview.get("repository_path") or ""
+                                    ),
+                                    old_text=str(
+                                        preview.get("old_text") or ""
+                                    ),
+                                    new_text=str(
+                                        preview.get("new_text") or ""
+                                    ),
+                                    expected_replacements=int(
+                                        preview.get("expected_replacements", 1)
+                                    ),
+                                )
+                            else:
+                                output = await run_specialist(
+                                    task,
+                                    self.settings.openai_model,
+                                    self.store,
+                                )
+
+                            normalized_output = str(output)
+
+                            if (
+                                "'status': 'rolled_back'" in normalized_output
+                                or '"status": "rolled_back"' in normalized_output
+                                or "'verified': False" in normalized_output
+                                or '"verified": false' in normalized_output.lower()
+                            ):
+                                raise RuntimeError(
+                                    "Verified edit execution failed verification: "
+                                    f"{normalized_output}"
+                                )
+
+                        else:
+                            output = await run_specialist(
+                                task,
+                                self.settings.openai_model,
+                                self.store,
+                            )
 
                         if isinstance(output, SpecialistOutcome):
                             persisted_output = output.model_dump()

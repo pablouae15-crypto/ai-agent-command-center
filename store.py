@@ -8,7 +8,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from write_approval import VerifiedApprovalRequest, approval_action_for_request
+from write_approval import (
+    VerifiedApprovalRequest,
+    VerifiedGmailDraftRequest,
+    approval_action_for_request,
+)
 
 
 PRIORITIES = ("Critical", "High", "Medium", "Low")
@@ -76,6 +80,7 @@ class TaskStore:
                     created_at TEXT NOT NULL,
                     decided_at TEXT,
                     decided_by TEXT,
+                    display_payload_json TEXT NOT NULL DEFAULT '{}',
                     FOREIGN KEY(task_id) REFERENCES tasks(id)
                 );
                 CREATE TABLE IF NOT EXISTS activity (
@@ -104,8 +109,35 @@ class TaskStore:
                     enabled INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS gmail_draft_executions (
+                    approval_id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    gmail_draft_id TEXT,
+                    gmail_message_id TEXT,
+                    error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(approval_id) REFERENCES approvals(id),
+                    FOREIGN KEY(task_id) REFERENCES tasks(id)
+                );
                 """
             )
+
+            approval_columns = {
+                row["name"]
+                for row in db.execute(
+                    "PRAGMA table_info(approvals)"
+                ).fetchall()
+            }
+
+            if "display_payload_json" not in approval_columns:
+                db.execute(
+                    "ALTER TABLE approvals "
+                    "ADD COLUMN display_payload_json "
+                    "TEXT NOT NULL DEFAULT '{}'"
+                )
 
     def seed_defaults(self) -> None:
         now = utc_now()
@@ -115,12 +147,13 @@ class TaskStore:
             ("QA", "idle", "Designs and runs tests, verifies regressions, and analyzes defects."),
             ("UIUX", "idle", "Reviews and improves interface structure, usability, and implementation."),
             ("CodeReviewer", "idle", "Reviews code quality, maintainability, correctness, and security."),
+            ("SecurityReviewer", "idle", "Reviews security controls, authorization boundaries, exposure risks, and secure implementation."),
+            ("Documentation", "idle", "Produces evidence-based technical documentation, architecture notes, and operating guidance."),
             ("Executive Assistant", "idle", "Plans, summarizes, organizes, and coordinates approved work inside the Command Center."),
             ("Email / Calendar", "idle", "Provides read-only Gmail search/read and Google Calendar event listing."),
-            ("HR & Compliance", "placeholder", "Placeholder; local policy review only."),
-            ("Job Tracker", "placeholder", "Placeholder; local tracking only."),
+            ("HR & Compliance", "idle", "Provides controlled HR policy, process, workforce, and compliance analysis."),
+            ("Job Tracker", "idle", "Tracks job opportunities, applications, follow-ups, and duplicate-submission risk."),
             ("Research / News", "idle", "Performs read-only public web research using the hosted web-search connector."),
-            ("Command Center Updater", "placeholder", "Placeholder; updates local state only."),
         ]
         with self._lock, self._connect() as db:
             for name, status, description in agents:
@@ -135,30 +168,6 @@ class TaskStore:
                            END,
                            description=excluded.description""",
                     (name, status, description, now),
-                )
-            db.execute(
-                """UPDATE recurring_jobs
-                   SET enabled=0
-                   WHERE name='command-center-heartbeat'
-                     AND agent_name='Command Center Updater'"""
-            )
-
-            existing = db.execute("SELECT COUNT(*) AS count FROM recurring_jobs").fetchone()["count"]
-            if existing == 0:
-                db.execute(
-                    """INSERT INTO recurring_jobs
-                       (id,name,agent_name,prompt,interval_seconds,next_run_at,enabled,created_at)
-                       VALUES(?,?,?,?,?,?,?,?)""",
-                    (
-                        str(uuid.uuid4()),
-                        "command-center-heartbeat",
-                        "Command Center Updater",
-                        "Review local task and approval counts and report any stale work.",
-                        300,
-                        now,
-                        0,
-                        now,
-                    ),
                 )
         self.add_activity("system", "Command Center initialized", payload={"seeded_agents": len(agents)})
 
@@ -176,12 +185,14 @@ class TaskStore:
         source: str = "manual",
         due_at: str | None = None,
         metadata: dict[str, Any] | None = None,
+        defer_exact_approval: bool = False,
     ) -> dict[str, Any]:
         if priority not in PRIORITIES:
             raise ValueError(f"priority must be one of {PRIORITIES}")
         if side_effect_level not in {"none", "external", "destructive"}:
             raise ValueError("side_effect_level must be none, external, or destructive")
         requires_approval = bool(requires_approval or side_effect_level != "none")
+        initial_status = "awaiting_approval" if requires_approval else "queued"
         task_id = str(uuid.uuid4())
         now = utc_now()
         with self._lock, self._connect() as db:
@@ -192,13 +203,13 @@ class TaskStore:
                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     task_id, title, description, agent_name, priority,
-                    "queued", side_effect_level, int(requires_approval), source,
+                    initial_status, side_effect_level, int(requires_approval), source,
                     now, now, due_at, json.dumps(metadata or {}),
                 ),
             )
         self.add_activity("task.created", f"Task created: {title}", task_id=task_id, agent_name=agent_name,
                           payload={"priority": priority, "requires_approval": requires_approval, "source": source})
-        if requires_approval:
+        if requires_approval and not defer_exact_approval:
             self.ensure_approval(task_id)
         return self.get_task(task_id)
 
@@ -224,7 +235,18 @@ class TaskStore:
     def claim_next_task(self) -> dict[str, Any] | None:
         with self._lock, self._connect() as db:
             row = db.execute(
-                """SELECT * FROM tasks WHERE status='queued' AND (requires_approval=0 OR approval_id IS NOT NULL)
+                """SELECT * FROM tasks
+                   WHERE status='queued'
+                     AND (
+                         requires_approval=0
+                         OR EXISTS (
+                             SELECT 1
+                             FROM approvals
+                             WHERE approvals.id=tasks.approval_id
+                               AND approvals.task_id=tasks.id
+                               AND approvals.status='approved'
+                         )
+                     )
                    ORDER BY CASE priority WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Medium' THEN 3 ELSE 4 END,
                    created_at LIMIT 1"""
             ).fetchone()
@@ -241,7 +263,7 @@ class TaskStore:
         now = utc_now()
         task = self.get_task(task_id)
         with self._lock, self._connect() as db:
-            db.execute("UPDATE tasks SET status='completed', completed_at=?, updated_at=?, result_json=? WHERE id=?", (now, now, json.dumps(result), task_id))
+            db.execute("UPDATE tasks SET status='completed', completed_at=?, updated_at=?, result_json=?, error=NULL WHERE id=?", (now, now, json.dumps(result), task_id))
             if task:
                 db.execute("UPDATE agent_status SET status='idle', current_task_id=NULL, last_seen_at=? WHERE name=?", (now, task["agent_name"]))
         self.add_activity("task.completed", f"Task completed: {task['title'] if task else task_id}", task_id=task_id,
@@ -251,7 +273,7 @@ class TaskStore:
         now = utc_now()
         task = self.get_task(task_id)
         with self._lock, self._connect() as db:
-            db.execute("UPDATE tasks SET status='failed', error=?, updated_at=? WHERE id=?", (error[:2000], now, task_id))
+            db.execute("UPDATE tasks SET status='failed', error=?, updated_at=?, result_json=NULL, completed_at=NULL WHERE id=?", (error[:2000], now, task_id))
             if task:
                 db.execute("UPDATE agent_status SET status='idle', current_task_id=NULL, last_seen_at=? WHERE name=?", (now, task["agent_name"]))
         self.add_activity("task.failed", f"Task failed: {task['title'] if task else task_id}", task_id=task_id,
@@ -324,22 +346,94 @@ class TaskStore:
 
         action = approval_action_for_request(request)
 
+        display_payload: dict[str, Any] = {}
+
+        if isinstance(request, VerifiedGmailDraftRequest):
+            display_payload = {
+                "type": "gmail_draft",
+                "to": list(request.to),
+                "cc": list(request.cc),
+                "bcc": list(request.bcc),
+                "subject": request.subject,
+                "body": request.body,
+            }
+
+        elif request.capability == "replace_text":
+            display_payload = {
+                "type": "verified_edit_execution",
+                "capability": request.capability,
+                "path": request.path,
+                "repository_path": request.repository_path,
+                "verification_profile": request.verification_profile,
+                "old_text": request.old_text,
+                "new_text": request.new_text,
+                "expected_replacements": request.expected_replacements,
+            }
+
+        elif request.capability == "write_text_file":
+            display_payload = {
+                "type": "verified_file_write_execution",
+                "capability": request.capability,
+                "path": request.path,
+                "repository_path": request.repository_path,
+                "verification_profile": request.verification_profile,
+                "content": request.content,
+                "expected_sha256": request.expected_sha256,
+            }
+
+        display_payload_json = json.dumps(
+            display_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
         with self._lock, self._connect() as db:
             existing = db.execute(
                 "SELECT * FROM approvals "
-                "WHERE task_id=? AND action=? AND status='pending'",
-                (request.task_id, action),
+                "WHERE task_id=? "
+                "AND action=? "
+                "AND status='pending' "
+                "AND display_payload_json=?",
+                (request.task_id, action, display_payload_json),
             ).fetchone()
 
             if existing:
                 approval = dict(existing)
             else:
-                approval_id = str(uuid.uuid4())
                 now = utc_now()
+
+                # An exact verified approval supersedes the generic approval
+                # that create_task() may have created for the same task.
                 db.execute(
-                    "INSERT INTO approvals(id,task_id,action,reason,created_at) "
-                    "VALUES(?,?,?,?,?)",
-                    (approval_id, request.task_id, action, reason, now),
+                    """
+                    UPDATE approvals
+                    SET status='superseded',
+                        decided_at=?,
+                        decided_by='system:exact-approval'
+                    WHERE task_id=?
+                      AND action=?
+                      AND status IN ('pending', 'approved')
+                    """,
+                    (
+                        now,
+                        request.task_id,
+                        task["title"],
+                    ),
+                )
+
+                approval_id = str(uuid.uuid4())
+                db.execute(
+                    "INSERT INTO approvals("
+                    "id,task_id,action,reason,created_at,display_payload_json"
+                    ") VALUES(?,?,?,?,?,?)",
+                    (
+                        approval_id,
+                        request.task_id,
+                        action,
+                        reason,
+                        now,
+                        display_payload_json,
+                    ),
                 )
                 db.execute(
                     "UPDATE tasks SET status='awaiting_approval', "
@@ -373,6 +467,152 @@ class TaskStore:
             ).fetchone()
             return dict(row) if row else None
 
+    def begin_gmail_draft_execution(
+        self,
+        approval_id: str,
+        task_id: str,
+    ) -> dict[str, Any]:
+        now = utc_now()
+
+        with self._lock, self._connect() as db:
+            existing = db.execute(
+                "SELECT * FROM gmail_draft_executions "
+                "WHERE approval_id=?",
+                (approval_id,),
+            ).fetchone()
+
+            if existing:
+                return dict(existing)
+
+            db.execute(
+                "INSERT INTO gmail_draft_executions("
+                "approval_id,task_id,status,created_at,updated_at"
+                ") VALUES(?,?,?,?,?)",
+                (
+                    approval_id,
+                    task_id,
+                    "creating",
+                    now,
+                    now,
+                ),
+            )
+
+            created = db.execute(
+                "SELECT * FROM gmail_draft_executions "
+                "WHERE approval_id=?",
+                (approval_id,),
+            ).fetchone()
+
+        return dict(created)
+
+
+    def complete_gmail_draft_execution(
+        self,
+        approval_id: str,
+        gmail_draft_id: str | None,
+        gmail_message_id: str | None,
+    ) -> dict[str, Any]:
+        now = utc_now()
+
+        with self._lock, self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM gmail_draft_executions "
+                "WHERE approval_id=?",
+                (approval_id,),
+            ).fetchone()
+
+            if not row:
+                raise ValueError(
+                    "Gmail draft execution was not started."
+                )
+
+            if row["status"] == "created":
+                return dict(row)
+
+            if row["status"] != "creating":
+                raise PermissionError(
+                    "Gmail draft execution is not in creating state."
+                )
+
+            db.execute(
+                "UPDATE gmail_draft_executions "
+                "SET status='created', "
+                "gmail_draft_id=?, gmail_message_id=?, "
+                "error=NULL, updated_at=? "
+                "WHERE approval_id=?",
+                (
+                    gmail_draft_id,
+                    gmail_message_id,
+                    now,
+                    approval_id,
+                ),
+            )
+
+            completed = db.execute(
+                "SELECT * FROM gmail_draft_executions "
+                "WHERE approval_id=?",
+                (approval_id,),
+            ).fetchone()
+
+        return dict(completed)
+
+
+    def fail_gmail_draft_execution(
+        self,
+        approval_id: str,
+        error: str,
+    ) -> dict[str, Any]:
+        now = utc_now()
+
+        with self._lock, self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM gmail_draft_executions "
+                "WHERE approval_id=?",
+                (approval_id,),
+            ).fetchone()
+
+            if not row:
+                raise ValueError(
+                    "Gmail draft execution was not started."
+                )
+
+            if row["status"] == "created":
+                return dict(row)
+
+            db.execute(
+                "UPDATE gmail_draft_executions "
+                "SET status='failed', error=?, updated_at=? "
+                "WHERE approval_id=?",
+                (
+                    error[:2000],
+                    now,
+                    approval_id,
+                ),
+            )
+
+            failed = db.execute(
+                "SELECT * FROM gmail_draft_executions "
+                "WHERE approval_id=?",
+                (approval_id,),
+            ).fetchone()
+
+        return dict(failed)
+
+
+    def get_gmail_draft_execution(
+        self,
+        approval_id: str,
+    ) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM gmail_draft_executions "
+                "WHERE approval_id=?",
+                (approval_id,),
+            ).fetchone()
+
+        return dict(row) if row else None
+
+
     def ensure_approval(self, task_id: str) -> dict[str, Any]:
         task = self.get_task(task_id)
         if not task:
@@ -402,23 +642,115 @@ class TaskStore:
             rows = db.execute("SELECT * FROM approvals WHERE status=? ORDER BY created_at DESC", (status,)).fetchall()
             return [dict(row) for row in rows]
 
-    def decide_approval(self, approval_id: str, decision: str, decided_by: str = "local-user") -> dict[str, Any]:
+    def decide_approval(
+        self,
+        approval_id: str,
+        decision: str,
+        decided_by: str = "local-user",
+    ) -> dict[str, Any]:
         if decision not in {"approved", "rejected"}:
             raise ValueError("decision must be approved or rejected")
+
         now = utc_now()
+        terminal_statuses = {"completed", "failed", "blocked", "partial"}
+
         with self._lock, self._connect() as db:
-            approval = db.execute("SELECT * FROM approvals WHERE id=?", (approval_id,)).fetchone()
+            approval = db.execute(
+                "SELECT * FROM approvals WHERE id=?",
+                (approval_id,),
+            ).fetchone()
+
             if not approval:
                 raise ValueError("approval not found")
+
             if approval["status"] != "pending":
                 return dict(approval)
-            db.execute("UPDATE approvals SET status=?, decided_at=?, decided_by=? WHERE id=?", (decision, now, decided_by, approval_id))
-            task_status = "queued" if decision == "approved" else "failed"
-            error = None if decision == "approved" else "Rejected by human reviewer"
-            db.execute("UPDATE tasks SET status=?, error=?, updated_at=? WHERE id=?", (task_status, error, now, approval["task_id"]))
-            result = dict(db.execute("SELECT * FROM approvals WHERE id=?", (approval_id,)).fetchone())
-        self.add_activity(f"approval.{decision}", f"Approval {decision}: {approval['action']}", task_id=approval["task_id"],
-                          payload={"approval_id": approval_id, "decided_by": decided_by})
+
+            task = db.execute(
+                "SELECT * FROM tasks WHERE id=?",
+                (approval["task_id"],),
+            ).fetchone()
+
+            if not task:
+                raise ValueError("approval task not found")
+
+            if task["status"] in terminal_statuses:
+                db.execute(
+                    """
+                    UPDATE approvals
+                    SET status='superseded',
+                        decided_at=?,
+                        decided_by='system:terminal-task'
+                    WHERE id=?
+                      AND status='pending'
+                    """,
+                    (now, approval_id),
+                )
+                result = dict(
+                    db.execute(
+                        "SELECT * FROM approvals WHERE id=?",
+                        (approval_id,),
+                    ).fetchone()
+                )
+            else:
+                db.execute(
+                    """
+                    UPDATE approvals
+                    SET status=?,
+                        decided_at=?,
+                        decided_by=?
+                    WHERE id=?
+                    """,
+                    (decision, now, decided_by, approval_id),
+                )
+
+                task_status = "queued" if decision == "approved" else "failed"
+                error = None if decision == "approved" else "Rejected by human reviewer"
+
+                db.execute(
+                    """
+                    UPDATE tasks
+                    SET status=?,
+                        error=?,
+                        updated_at=?
+                    WHERE id=?
+                    """,
+                    (
+                        task_status,
+                        error,
+                        now,
+                        approval["task_id"],
+                    ),
+                )
+
+                result = dict(
+                    db.execute(
+                        "SELECT * FROM approvals WHERE id=?",
+                        (approval_id,),
+                    ).fetchone()
+                )
+
+        if result["status"] == "superseded":
+            self.add_activity(
+                "approval.superseded",
+                f"Approval superseded because task is already terminal: {approval['action']}",
+                task_id=approval["task_id"],
+                payload={
+                    "approval_id": approval_id,
+                    "decided_by": "system:terminal-task",
+                },
+            )
+        else:
+            self.add_activity(
+                f"approval.{decision}",
+                f"Approval {decision}: {approval['action']}",
+                task_id=approval["task_id"],
+                payload={
+                    "approval_id": approval_id,
+                    "decided_by": decided_by,
+                },
+            )
+
         return result
 
     def list_agents(self) -> list[dict[str, Any]]:
@@ -428,6 +760,44 @@ class TaskStore:
     def list_activity(self, limit: int = 30) -> list[dict[str, Any]]:
         with self._connect() as db:
             return [dict(row) for row in db.execute("SELECT * FROM activity ORDER BY id DESC LIMIT ?", (limit,))]
+
+    def list_task_visibility(self, limit: int = 25) -> list[dict[str, Any]]:
+        tasks = self.list_tasks(limit)
+
+        with self._connect() as db:
+            for task in tasks:
+                route = db.execute(
+                    """SELECT payload_json, created_at
+                       FROM activity
+                       WHERE task_id=? AND event_type='orchestrator.routed'
+                       ORDER BY id DESC LIMIT 1""",
+                    (task["id"],),
+                ).fetchone()
+
+                latest = db.execute(
+                    """SELECT event_type, created_at
+                       FROM activity
+                       WHERE task_id=?
+                       ORDER BY id DESC LIMIT 1""",
+                    (task["id"],),
+                ).fetchone()
+
+                task["routed_specialist"] = None
+                task["routing_reason"] = None
+
+                if route:
+                    try:
+                        payload = json.loads(route["payload_json"] or "{}")
+                    except json.JSONDecodeError:
+                        payload = {}
+
+                    task["routed_specialist"] = payload.get("selected_specialist")
+                    task["routing_reason"] = payload.get("reason")
+
+                task["latest_activity_type"] = latest["event_type"] if latest else None
+                task["latest_activity_at"] = latest["created_at"] if latest else None
+
+        return tasks
 
     def add_activity(self, event_type: str, message: str, task_id: str | None = None,
                      agent_name: str | None = None, payload: dict[str, Any] | None = None) -> None:
@@ -539,3 +909,4 @@ class TaskStore:
         next_run = (datetime.now(timezone.utc) + timedelta(seconds=interval_seconds)).isoformat()
         with self._lock, self._connect() as db:
             db.execute("UPDATE recurring_jobs SET next_run_at=? WHERE id=?", (next_run, job_id))
+

@@ -104,11 +104,27 @@ class Settings:
     )
 
     google_gmail_readonly_scope: str = (
-        "https://www.googleapis.com/auth/gmail.readonly"
+        'https://www.googleapis.com/auth/gmail.readonly'
     )
 
     google_calendar_readonly_scope: str = (
-        "https://www.googleapis.com/auth/calendar.readonly"
+        'https://www.googleapis.com/auth/calendar.readonly'
+    )
+
+
+    google_gmail_compose_scope: str = (
+        'https://www.googleapis.com/auth/gmail.compose'
+    )
+
+    google_gmail_draft_token_path: Path = Path(
+        os.getenv(
+            "GOOGLE_GMAIL_DRAFT_TOKEN_PATH",
+            str(
+                BASE_DIR
+                / "credentials"
+                / "google_gmail_draft_token.json"
+            ),
+        )
     )
 
 

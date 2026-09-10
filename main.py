@@ -14,7 +14,7 @@ from config import settings
 from runtime import Runtime
 from store import TaskStore
 from personal_assistant import PersonalAssistantRequest, handoff_to_command_center
-from execution_adapter import ExecutionEngineAdapter
+from write_approval import VerifiedGmailDraftRequest
 from execution_adapter import ExecutionEngineAdapter
 
 
@@ -62,6 +62,7 @@ class TaskCreate(BaseModel):
     priority: Literal["Critical", "High", "Medium", "Low"] = "Medium"
     side_effect_level: Literal["none", "external", "destructive"] = "none"
     requires_approval: bool = False
+
 
 def classify_task_side_effect(
     title: str,
@@ -163,6 +164,14 @@ def classify_task_side_effect(
     return "none"
 
 
+class GmailDraftApprovalRequest(BaseModel):
+    to: list[str] = Field(min_length=1)
+    cc: list[str] = Field(default_factory=list)
+    bcc: list[str] = Field(default_factory=list)
+    subject: str = Field(min_length=1, max_length=500)
+    body: str = Field(min_length=1, max_length=50000)
+
+
 @app.get("/health")
 def health() -> dict:
     return {
@@ -191,7 +200,7 @@ def summary() -> dict:
     return {
         **store.summary(),
         "agents": store.list_agents(),
-        "tasks": store.list_tasks(25),
+        "tasks": store.list_task_visibility(25),
         "approvals": store.list_approvals(),
         "activity": store.list_activity(30),
         "execution_note": "Agent execution is opt-in via ENABLE_AGENT_RUNS=true; enabled connectors remain capability-scoped and approval-gated where required.",
@@ -237,6 +246,89 @@ def create_task(request: TaskCreate) -> dict:
     )
 
     return store.create_task(**payload)
+
+
+
+@app.post("/api/gmail/drafts/request", status_code=201)
+def request_gmail_draft_approval(
+    request: GmailDraftApprovalRequest,
+) -> dict:
+    to = tuple(
+        address.strip()
+        for address in request.to
+        if address.strip()
+    )
+    cc = tuple(
+        address.strip()
+        for address in request.cc
+        if address.strip()
+    )
+    bcc = tuple(
+        address.strip()
+        for address in request.bcc
+        if address.strip()
+    )
+    subject = request.subject.strip()
+    body = request.body.strip()
+
+    if not to:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one recipient is required.",
+        )
+
+    if not subject:
+        raise HTTPException(
+            status_code=400,
+            detail="subject is required.",
+        )
+
+    if not body:
+        raise HTTPException(
+            status_code=400,
+            detail="body is required.",
+        )
+
+    task = store.create_task(
+        title=f"Gmail draft: {subject[:160]}",
+        description="Prepare approved Gmail draft.",
+        agent_name="Email / Calendar",
+        priority="Medium",
+        side_effect_level="external",
+        requires_approval=False,
+        metadata={
+            "workflow_type": "native_gmail_draft",
+        },
+        defer_exact_approval=True,
+    )
+
+    exact_request = VerifiedGmailDraftRequest(
+        task_id=str(task["id"]),
+        capability="gmail.draft.create",
+        to=to,
+        cc=cc,
+        bcc=bcc,
+        subject=subject,
+        body=body,
+    )
+
+    approval = store.create_exact_approval(
+        exact_request,
+        reason="Create this exact Gmail draft",
+    )
+
+    return {
+        "task": task,
+        "approval": approval,
+        "draft": {
+            "to": list(to),
+            "cc": list(cc),
+            "bcc": list(bcc),
+            "subject": subject,
+            "body": body,
+        },
+        "status": "awaiting_approval",
+    }
 
 
 @app.post("/api/approvals/{approval_id}/{decision}")

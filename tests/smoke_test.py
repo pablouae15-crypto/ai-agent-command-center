@@ -60,7 +60,51 @@ def main() -> int:
             after_decision = request(f"{base}/api/summary")
             smoke_task = next(item for item in after_decision["tasks"] if item["title"] == "Smoke test task")
             assert smoke_task["status"] == "queued"
-            print("smoke test passed: health, SQLite persistence, dashboard API, approval gate, and approval decision")
+
+            gmail = request(
+                f"{base}/api/gmail/drafts/request",
+                "POST",
+                {
+                    "to": ["recipient@example.com"],
+                    "cc": ["cc@example.com"],
+                    "bcc": [],
+                    "subject": "Smoke Gmail Draft",
+                    "body": "This is an approval-gated Gmail draft smoke test.",
+                },
+            )
+
+            assert gmail["status"] == "awaiting_approval"
+            assert gmail["task"]["agent_name"] == "Email / Calendar"
+            assert gmail["approval"]["status"] == "pending"
+            assert gmail["draft"]["to"] == ["recipient@example.com"]
+            assert gmail["draft"]["cc"] == ["cc@example.com"]
+            assert gmail["draft"]["subject"] == "Smoke Gmail Draft"
+            assert gmail["draft"]["body"] == "This is an approval-gated Gmail draft smoke test."
+
+            gmail_summary = request(f"{base}/api/summary")
+            gmail_approval = next(
+                item
+                for item in gmail_summary["approvals"]
+                if item["id"] == gmail["approval"]["id"]
+            )
+
+            preview = json.loads(
+                gmail_approval["display_payload_json"]
+            )
+
+            assert preview == {
+                "type": "gmail_draft",
+                "to": ["recipient@example.com"],
+                "cc": ["cc@example.com"],
+                "bcc": [],
+                "subject": "Smoke Gmail Draft",
+                "body": "This is an approval-gated Gmail draft smoke test.",
+            }
+
+            print(
+                "smoke test passed: health, persistence, approval gates, "
+                "approval decision, and Gmail draft approval request"
+            )
             return 0
         finally:
             process.terminate()

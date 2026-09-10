@@ -98,9 +98,13 @@ def test_specialist_registry_contains_only_authorized_developer_roles() -> None:
         "QA",
         "UIUX",
         "CodeReviewer",
+        "SecurityReviewer",
+        "Documentation",
         "Executive Assistant",
         "Research / News",
         "Email / Calendar",
+        "HR & Compliance",
+        "Job Tracker",
     }
 
 
@@ -257,19 +261,19 @@ def test_seed_defaults_preserves_non_placeholder_runtime_status(
     assert developer["status"] == "working"
 
 
-def test_seed_defaults_disables_legacy_placeholder_heartbeat(
+def test_seed_defaults_does_not_create_legacy_placeholder_heartbeat(
     tmp_path: Path,
 ) -> None:
     store = make_store(tmp_path)
     store.seed_defaults()
 
-    heartbeat = next(
-        row for row in store.list_jobs()
+    heartbeats = [
+        row
+        for row in store.list_jobs()
         if row["name"] == "command-center-heartbeat"
-    )
+    ]
 
-    assert heartbeat["agent_name"] == "Command Center Updater"
-    assert heartbeat["enabled"] == 0
+    assert heartbeats == []
 
 
 def test_research_news_gets_isolated_web_search_tool(
@@ -383,7 +387,7 @@ def test_seed_defaults_promotes_existing_research_placeholder(
     assert research["status"] == "idle"
 
 
-def test_email_calendar_gets_readonly_google_tools(
+def test_email_calendar_gets_approved_google_tools(
     tmp_path: Path,
 ) -> None:
     store = make_store(tmp_path)
@@ -402,6 +406,7 @@ def test_email_calendar_gets_readonly_google_tools(
 
     assert "gmail_search_messages" in tool_names
     assert "gmail_read_message" in tool_names
+    assert "gmail_create_draft" in tool_names
     assert "calendar_list_events" in tool_names
 
     forbidden = {
@@ -450,6 +455,7 @@ def test_non_email_specialists_do_not_get_google_tools(
 
     assert "gmail_search_messages" not in tool_names
     assert "gmail_read_message" not in tool_names
+    assert "gmail_create_draft" not in tool_names
     assert "calendar_list_events" not in tool_names
 
 
@@ -466,3 +472,83 @@ def test_email_calendar_is_seeded_idle(
 
     assert email_calendar["status"] == "idle"
     assert "read-only Gmail" in email_calendar["description"]
+
+def test_hr_compliance_specialist_is_authorized_and_buildable(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+
+    specialist = build_specialist(
+        "HR & Compliance",
+        "gpt-5.6",
+        store,
+        "task-hr-001",
+    )
+
+    assert specialist.name == "Command Center HR & Compliance"
+    assert "HR & Compliance" in SPECIALIST_INSTRUCTIONS
+
+    tool_names = [
+        getattr(tool, "name", tool.__class__.__name__)
+        for tool in specialist.tools
+    ]
+
+    assert "WebSearchTool" not in tool_names
+    assert "ShellTool" not in tool_names
+    assert "LocalShellTool" not in tool_names
+    assert "ComputerTool" not in tool_names
+
+
+def test_hr_compliance_is_seeded_idle(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+    store.seed_defaults()
+
+    hr = next(
+        row for row in store.list_agents()
+        if row["name"] == "HR & Compliance"
+    )
+
+    assert hr["status"] == "idle"
+    assert "HR" in hr["description"]
+
+def test_job_tracker_specialist_is_authorized_and_buildable(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+
+    specialist = build_specialist(
+        "Job Tracker",
+        "gpt-5.6",
+        store,
+        "task-job-001",
+    )
+
+    assert specialist.name == "Command Center Job Tracker"
+    assert "Job Tracker" in SPECIALIST_INSTRUCTIONS
+
+    tool_names = [
+        getattr(tool, "name", tool.__class__.__name__)
+        for tool in specialist.tools
+    ]
+
+    assert "WebSearchTool" not in tool_names
+    assert "ShellTool" not in tool_names
+    assert "LocalShellTool" not in tool_names
+    assert "ComputerTool" not in tool_names
+
+
+def test_job_tracker_is_seeded_idle(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+    store.seed_defaults()
+
+    job_tracker = next(
+        row for row in store.list_agents()
+        if row["name"] == "Job Tracker"
+    )
+
+    assert job_tracker["status"] == "idle"
+    assert "job" in job_tracker["description"].lower()

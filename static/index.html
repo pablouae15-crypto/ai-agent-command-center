@@ -3,148 +3,2562 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+
   <title>AI Agent Command Center</title>
+
   <style>
-    :root { color-scheme: dark; font-family: Inter, Segoe UI, sans-serif; background:#101827; color:#e7eef8; }
-    body { margin:0; background:linear-gradient(135deg,#101827,#17253b); }
-    main { max-width:1300px; margin:auto; padding:28px; }
-    header { display:flex; justify-content:space-between; gap:20px; align-items:flex-start; margin-bottom:24px; }
-    h1 { margin:0 0 6px; font-size:28px; } h2 { font-size:17px; margin:0 0 14px; }
-    .muted { color:#9aabc0; } .pill { border-radius:999px; padding:6px 10px; background:#1e3655; font-size:12px; }
-    .grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin-bottom:18px; }
-    .card { background:#17253b; border:1px solid #2c425d; border-radius:14px; padding:16px; box-shadow:0 8px 30px #07101c55; }
-    .metric { font-size:27px; font-weight:700; } .label { color:#9aabc0; font-size:12px; text-transform:uppercase; letter-spacing:.08em; }
-    .columns { display:grid; grid-template-columns:1.2fr .8fr; gap:18px; } table { width:100%; border-collapse:collapse; font-size:13px; }
-    th,td { padding:10px 8px; border-bottom:1px solid #2c425d; text-align:left; vertical-align:top; } th { color:#9aabc0; font-weight:600; }
-    .status { color:#b8d8ff; } .critical { color:#ff9b9b; } .high { color:#ffd08a; } .low { color:#a9e7ba; }
-    button { border:0; border-radius:8px; padding:7px 10px; background:#4d8ed8; color:white; cursor:pointer; margin-right:5px; }
-    button.reject { background:#a64959; } form { display:grid; gap:9px; } input,textarea,select { background:#0f1928; color:#e7eef8; border:1px solid #38516f; border-radius:8px; padding:9px; font:inherit; } textarea { min-height:80px; }
-    .full { grid-column:1/-1; } .activity { max-height:260px; overflow:auto; } .activity div { padding:8px 0; border-bottom:1px solid #2c425d; font-size:13px; }
-    @media(max-width:900px){.grid,.columns{grid-template-columns:1fr 1fr}.columns{grid-template-columns:1fr}.full{grid-column:auto}}
-    @media(max-width:560px){.grid{grid-template-columns:1fr 1fr} header{display:block}}
-  </style>
+    :root {
+      color-scheme: dark;
+
+      font-family:
+        Inter,
+        "Segoe UI",
+        system-ui,
+        sans-serif;
+
+      --bg: #0b1220;
+      --panel: #111c2d;
+      --panel-2: #16243a;
+      --border: #273b56;
+      --text: #e7eef8;
+      --muted: #91a4bb;
+      --accent: #5da9ff;
+      --good: #8bd6a0;
+      --warn: #f2c078;
+      --danger: #ff9090;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top right, #183251 0, transparent 32%),
+        linear-gradient(135deg, #09111e, var(--bg));
+    }
+
+    main {
+      max-width: 1500px;
+      margin: auto;
+      padding: 26px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 20px;
+      margin-bottom: 22px;
+    }
+
+    h1 {
+      margin: 0 0 7px;
+      font-size: 29px;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 17px;
+    }
+
+    h3 {
+      margin: 0;
+      font-size: 14px;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .small {
+      font-size: 12px;
+    }
+
+    .health {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      border-radius: 999px;
+      font-size: 12px;
+    }
+
+    .health-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--good);
+      box-shadow: 0 0 12px #8bd6a088;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    .metric-card,
+    .card {
+      background: rgba(17, 28, 45, .96);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: 0 10px 30px #02081355;
+    }
+
+    .metric-card {
+      padding: 15px;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .09em;
+    }
+
+    .metric-value {
+      margin-top: 5px;
+      font-size: 28px;
+      font-weight: 700;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.6fr) minmax(330px, .7fr);
+      gap: 18px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 18px;
+      align-content: start;
+    }
+
+    .card {
+      padding: 16px;
+      overflow: hidden;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th,
+    td {
+      padding: 11px 9px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+
+    tbody tr:hover {
+      background: #17263b;
+    }
+
+    .task-title {
+      font-weight: 650;
+      margin-bottom: 4px;
+    }
+
+    .task-description {
+      max-width: 580px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .task-inline-preview {
+      max-width: 580px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+
+    .routing {
+      margin-top: 7px;
+      padding-left: 9px;
+      border-left: 2px solid #496e9c;
+      font-size: 12px;
+    }
+
+    .error {
+      margin-top: 7px;
+      color: var(--danger);
+      font-size: 12px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 4px 8px;
+      white-space: nowrap;
+      font-size: 11px;
+      background: #142338;
+    }
+
+    .status-running {
+      color: #9fcaff;
+      border-color: #365f92;
+    }
+
+    .status-completed {
+      color: var(--good);
+      border-color: #326749;
+    }
+
+    .status-failed {
+      color: var(--danger);
+      border-color: #814450;
+    }
+
+    .status-blocked {
+      color: var(--warn);
+      border-color: #856339;
+    }
+
+    .status-partial {
+      color: #9fcaff;
+      border-color: #365f92;
+    }
+
+    .status-awaiting_approval {
+      color: var(--warn);
+      border-color: #856339;
+    }
+
+    .status-queued {
+      color: #b6c8dd;
+    }
+
+    .priority-critical {
+      color: var(--danger);
+    }
+
+    .priority-high {
+      color: var(--warn);
+    }
+
+    .priority-low {
+      color: var(--good);
+    }
+
+    .agent-card {
+      padding: 11px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .agent-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .agent-task {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .approval {
+      padding: 13px;
+      margin-bottom: 12px;
+      border: 1px solid #745b35;
+      border-radius: 11px;
+      background: #1b2028;
+    }
+
+    .approval-preview {
+      margin-top: 10px;
+      padding: 11px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: #0c1725;
+    }
+
+    .approval-body {
+      max-height: 180px;
+      overflow: auto;
+      margin-top: 9px;
+      padding: 10px;
+      background: #09131f;
+      border-radius: 7px;
+      white-space: pre-wrap;
+      line-height: 1.45;
+    }
+
+    .approval-human {
+      display: grid;
+      gap: 13px;
+    }
+
+    .approval-type-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .approval-field {
+      display: grid;
+      gap: 4px;
+    }
+
+    .approval-path {
+      display: block;
+      max-width: 100%;
+      padding: 8px 9px;
+      border-radius: 7px;
+      background: #09131f;
+      overflow-wrap: anywhere;
+      white-space: normal;
+      line-height: 1.4;
+    }
+
+    .approval-change {
+      padding: 10px;
+      border-radius: 8px;
+      background: #09131f;
+    }
+
+    .diff-line {
+      margin-top: 6px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      font-family: Consolas, "Courier New", monospace;
+      overflow-wrap: anywhere;
+    }
+
+    .diff-remove {
+      background: rgba(169, 79, 95, 0.16);
+    }
+
+    .diff-add {
+      background: rgba(75, 145, 223, 0.16);
+    }
+
+    .approval-details {
+      margin-top: 3px;
+      color: var(--muted);
+    }
+
+    .approval-details summary {
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .approval-details pre {
+      margin: 9px 0 0;
+      padding: 10px;
+      max-height: 180px;
+      overflow: auto;
+      border-radius: 7px;
+      background: #07111c;
+      color: var(--text);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .task-scroll {
+      max-height: 640px;
+      overflow-y: auto;
+      overflow-x: auto;
+      padding-right: 4px;
+      scrollbar-gutter: stable;
+    }
+
+    .agent-scroll {
+      max-height: 640px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding-right: 6px;
+      scrollbar-gutter: stable;
+    }
+
+    .task-scroll::-webkit-scrollbar,
+    .agent-scroll::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+
+    .task-scroll::-webkit-scrollbar-track,
+    .agent-scroll::-webkit-scrollbar-track {
+      background: #0b1624;
+      border-radius: 8px;
+    }
+
+    .task-scroll::-webkit-scrollbar-thumb,
+    .agent-scroll::-webkit-scrollbar-thumb {
+      background: #41546a;
+      border-radius: 8px;
+      border: 2px solid #0b1624;
+    }
+
+    .task-scroll::-webkit-scrollbar-thumb:hover,
+    .agent-scroll::-webkit-scrollbar-thumb:hover {
+      background: #58708c;
+    }
+
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 11px;
+      background: #4b91df;
+      color: white;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    button:hover {
+      filter: brightness(1.08);
+    }
+
+    button.reject {
+      background: #a94f5f;
+    }
+
+    form {
+      display: grid;
+      gap: 9px;
+    }
+
+    input,
+    textarea,
+    select {
+      width: 100%;
+      padding: 10px;
+      color: var(--text);
+      background: #0b1624;
+      border: 1px solid #38516f;
+      border-radius: 8px;
+      font: inherit;
+    }
+
+    textarea {
+      min-height: 90px;
+      resize: vertical;
+    }
+
+    .activity {
+      max-height: 350px;
+      overflow: auto;
+    }
+
+    .activity-item {
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+
+    .empty {
+      padding: 20px 0;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    @media (max-width: 1050px) {
+      .metrics {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 650px) {
+      main {
+        padding: 16px;
+      }
+
+      header {
+        display: block;
+      }
+
+      .health {
+        width: fit-content;
+        margin-top: 14px;
+      }
+
+      .metrics {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+  
+    /* Phase 10 dashboard filtering */
+    .dashboard-filter-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 0 0 12px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: #0b1624;
+    }
+
+    .dashboard-filter-bar select,
+    .dashboard-filter-bar input {
+      width: auto;
+      min-width: 135px;
+      padding: 7px 9px;
+      margin: 0;
+      font-size: 12px;
+    }
+
+    .dashboard-filter-bar input {
+      flex: 1;
+      min-width: 170px;
+    }
+
+    .dashboard-filter-bar button {
+      padding: 7px 10px;
+      background: #24374c;
+      font-size: 12px;
+    }
+
+    .dashboard-filter-label {
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .activity-sort-control {
+      width: auto !important;
+      min-width: 125px;
+      padding: 6px 8px !important;
+      margin: 0 !important;
+      font-size: 12px;
+    }
+
+    .filter-match-count {
+      margin-left: auto;
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+
+  .task-row-clickable {
+    cursor: pointer;
+  }
+
+  .task-row-clickable:hover {
+    background: rgba(255,255,255,0.035);
+  }
+
+  .task-row-clickable > td {
+    vertical-align: top;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  .task-row-clickable .task-title,
+  .task-row-clickable .task-description,
+  .task-row-clickable .task-inline-preview,
+  .task-row-clickable .routing {
+    max-height: 38px;
+    overflow: hidden;
+  }
+
+  .task-row-clickable .task-description,
+  .task-row-clickable .task-inline-preview,
+  .task-row-clickable .routing .muted {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    white-space: normal;
+  }
+
+
+  .task-detail-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(0,0,0,0.72);
+  }
+
+  .task-detail-modal.open {
+    display: flex;
+  }
+
+  .task-detail-dialog {
+    width: min(980px, 96vw);
+    max-height: 90vh;
+    overflow: auto;
+    background: #0b1730;
+    border: 1px solid #29466f;
+    border-radius: 14px;
+    box-shadow: 0 24px 70px rgba(0,0,0,0.55);
+  }
+
+  .task-detail-header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 18px 20px;
+    background: #0b1730;
+    border-bottom: 1px solid #29466f;
+  }
+
+  .task-detail-body {
+    padding: 20px;
+  }
+
+  .task-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .task-detail-field {
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+
+  .task-detail-label {
+    display: block;
+    margin-bottom: 5px;
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+  }
+
+  .task-detail-section {
+    margin-top: 18px;
+  }
+
+  .task-detail-section pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  @media (max-width: 700px) {
+    .task-detail-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+
+  /* Compact Task Details layout */
+  .task-detail-dialog {
+    width: min(840px, 94vw);
+    max-height: 88vh;
+  }
+
+  .task-detail-header {
+    padding: 14px 16px;
+  }
+
+  .task-detail-body {
+    padding: 14px 16px 18px;
+  }
+
+  .task-detail-grid {
+    gap: 8px;
+  }
+
+  .task-detail-field {
+    padding: 8px 10px;
+    min-height: 0;
+  }
+
+  .task-detail-label {
+    margin-bottom: 3px;
+    font-size: 10px;
+  }
+
+  .task-detail-section {
+    margin-top: 14px;
+  }
+
+  #task-detail-content h3 {
+    margin: 4px 0 8px;
+    font-size: 24px;
+    line-height: 1.25;
+    font-weight: 700;
+  }
+
+  .task-view-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 1px solid #29466f;
+    border-radius: 9px;
+    background: #102340;
+    color: #d8e8ff;
+    font-size: 18px;
+    cursor: pointer;
+  }
+
+  .task-view-button:hover,
+  .task-view-button:focus-visible {
+    background: #18345c;
+    border-color: #4a78ad;
+  }
+
+  .task-view-cell {
+    width: 54px;
+    text-align: center;
+    vertical-align: middle;
+  }
+
+
+  /* Task Details readability refinement */
+  .task-detail-dialog {
+    width: min(820px, 94vw);
+    max-height: 86vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .task-detail-body {
+    padding: 12px 14px 16px;
+    overflow-y: auto;
+  }
+
+  .task-detail-grid {
+    gap: 6px;
+  }
+
+  .task-detail-field {
+    padding: 6px 8px;
+  }
+
+  .task-detail-field > div {
+    font-size: 12px;
+    line-height: 1.3;
+  }
+
+  .task-detail-label {
+    font-size: 9px;
+    margin-bottom: 2px;
+  }
+
+  .task-detail-section {
+    margin-top: 12px;
+  }
+
+  .task-detail-section h3,
+  .task-detail-section pre {
+    margin: 4px 0 0;
+    font-size: 16px;
+    line-height: 1.55;
+    font-family: inherit;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  #task-detail-content h3 {
+    font-size: 16px;
+    line-height: 1.55;
+    font-weight: 600;
+  }
+
+  .task-detail-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .task-copy-button {
+    border: 1px solid #29466f;
+    border-radius: 8px;
+    background: #102340;
+    color: #d8e8ff;
+    padding: 7px 11px;
+    cursor: pointer;
+  }
+
+  .task-copy-button:hover,
+  .task-copy-button:focus-visible {
+    background: #18345c;
+    border-color: #4a78ad;
+  }
+
+
+  /* Large readable Task Details viewport */
+  .task-detail-dialog {
+    width: min(1120px, 88vw);
+    height: min(820px, 88vh);
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .task-detail-header {
+    flex: 0 0 auto;
+  }
+
+  .task-detail-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 14px 18px 20px;
+  }
+
+  .task-detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  .task-detail-field {
+    padding: 6px 9px;
+  }
+
+  .task-detail-section h3,
+  .task-detail-section pre,
+  #task-detail-content h3 {
+    font-size: 16px;
+    line-height: 1.6;
+  }
+
+
+    header {
+      position: relative;
+    }
+
+    .header-owner-watermark {
+      position: absolute;
+      left: 50%;
+      top: 18px;
+      transform: translateX(-50%);
+      text-align: center;
+      pointer-events: none;
+      user-select: none;
+      line-height: 1.25;
+      letter-spacing: 0.12em;
+      white-space: nowrap;
+      z-index: 1;
+    }
+
+    .header-owner-watermark .owner-credit {
+      margin-top: 4px;
+      font-size: 10px;
+      color: rgba(186, 230, 253, 0.45);
+    }
+
+    .header-owner-watermark .owner-year {
+      margin-top: 2px;
+      font-size: 9px;
+      color: rgba(186, 230, 253, 0.38);
+    }
+
+    @media (max-width: 760px) {
+      .header-owner-watermark {
+        display: none;
+      }
+    }
+</style>
 </head>
+
 <body>
 <main>
-  <header><div><h1>AI Agent Command Center</h1><div class="muted">Approval-first local control plane for a 24/7 orchestrator</div></div><div id="health" class="pill">checking healthâ€¦</div></header>
-  <section id="metrics" class="grid"></section>
-  <section class="card" id="dashboard-filter-controls">
-    <h2>Dashboard filters</h2>
-    <select id="task-priority-filter"><option value="all">All priorities</option></select>
-    <select id="task-owner-filter"><option value="all">All owners</option></select>
-    <select id="task-status-filter"><option value="all">All statuses</option></select>
-    <input id="agent-search-filter" placeholder="Search agents" />
-    <select id="agent-status-filter"><option value="all">All agent statuses</option></select>
-    <select id="activity-sort-filter"><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select>
-  </section>
 
-  <section class="columns">
-    <div class="card"><h2>Tasks</h2><div style="overflow:auto"><table><thead><tr><th>Priority</th><th>Task</th><th>Agent</th><th>Status</th></tr></thead><tbody id="tasks"></tbody></table></div></div>
-    <div class="card"><h2>Approvals waiting</h2><div id="approvals" class="muted">None</div></div>
-    <div class="card"><h2>Agent status</h2><div style="overflow:auto"><table><thead><tr><th>Agent</th><th>Status</th><th>Last seen</th></tr></thead><tbody id="agents"></tbody></table></div></div>
-    <div class="card"><h2>New local task</h2><form id="task-form"><input name="title" placeholder="Task title" required /><textarea name="description" placeholder="Describe the work" required></textarea><select name="priority"><option>Medium</option><option>Critical</option><option>High</option><option>Low</option></select><button>Add queued task</button></form><p class="muted">External/destructive work automatically enters the approval queue.</p></div>
-   <div class="card"><h2>Personal AI Assistant</h2><form id="assistant-form"><textarea id="assistant-request" name="request" placeholder="Tell your Personal AI Assistant what you need..." required></textarea><select id="assistant-priority" name="priority"><option>Medium</option><option>Critical</option><option>High</option><option>Low</option></select><button id="assistant-submit" type="submit">Send to Assistant</button></form><div id="assistant-result" class="muted" style="margin-top:10px">Ready for your request.</div><p class="muted">Requests are handed to the Orchestrator and remain subject to approval and execution controls.</p></div>
-    <div class="card full"><h2>Recent activity</h2><div id="activity" class="activity"></div></div>
-  </section>
-  <div id="task-detail-modal" style="display:none;position:fixed;inset:0;background:#0008;padding:40px;z-index:20">
-    <div class="card" style="max-width:760px;margin:auto">
-      <button id="task-detail-close" type="button">Close</button>
-      <pre id="task-detail-content" style="white-space:pre-wrap"></pre>
-    </div>
+  <header>
+  <div class="header-owner-watermark" aria-hidden="true">
+    <div class="owner-credit">Developed and designed by JOHN PAOLO BERMUDO</div>
+    <div class="owner-year">Pabz.ai 2026</div>
   </div>
-</main>
-<script>
-const STORAGE_KEYS = {
-  taskPriority: 'dashboard.task.priority',
-  taskOwner: 'dashboard.task.owner',
-  taskStatus: 'dashboard.task.status',
-  agentSearch: 'dashboard.agent.search',
-  agentStatus: 'dashboard.agent.status',
-  activitySort: 'dashboard.activity.sort'
-};
-function saveDashboardSetting(key, value){
-  localStorage.setItem(key, value);
-}
-function loadDashboardSetting(key, fallback){
-  return localStorage.getItem(key) || fallback;
-}
-const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-function taskCreatedAt(task){
-  const value = task?.created_at || '';
-  const timestamp = Date.parse(value);
-  return Number.isNaN(timestamp) ? 0 : timestamp;
-}
-function openTaskDetail(taskId){
-  const modal = document.querySelector('#task-detail-modal');
-  const content = document.querySelector('#task-detail-content');
-  const rows = Array.from(document.querySelectorAll('[data-task-id]'));
-  const row = rows.find(item => item.dataset.taskId === String(taskId));
-  modal.dataset.taskId = String(taskId);
-  content.textContent = row ? row.innerText : `Task ${taskId}`;
-  modal.style.display = 'block';
-}
-function closeTaskDetail(){
-  document.querySelector('#task-detail-modal').style.display = 'none';
-}
-document.querySelector('#task-detail-close').addEventListener('click', closeTaskDetail);
+<div>
+      <h1>AI Agent Command Center</h1>
 
-async function refresh(){
-  const res = await fetch('/api/summary'); const d = await res.json();
-  const counts = d.task_counts || {};
-  document.querySelector('#health').textContent = d.execution_note.includes('opt-in') ? 'healthy Â· execution opt-in' : 'healthy';
-  document.querySelector('#metrics').innerHTML = [['Queued',counts.queued||0],['Running',counts.running||0],['Completed',counts.completed||0],['Approvals',d.approvals_waiting||0]].map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="metric">${x[1]}</div></div>`).join('');
-  document.querySelector('#tasks').innerHTML = (d.tasks||[]).sort((a,b)=>{ const aCreated = taskCreatedAt(a); const bCreated = taskCreatedAt(b); return bCreated - aCreated; }).map(t=>`<tr data-task-id="${esc(t.id)}" data-created-at="${esc(t.created_at || '')}"><td class="${t.priority.toLowerCase()}">${esc(t.priority)}</td><td><button type="button" data-task-id="${esc(t.id)}" onclick="openTaskDetail('${esc(t.id)}')">View</button> <strong>${esc(t.title)}</strong><br><span class="muted">${esc(t.description).slice(0,120)}</span></td><td>${esc(t.agent_name)}</td><td class="status">${esc(t.status)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">No tasks</td></tr>';
-  document.querySelector('#agents').innerHTML = (d.agents||[]).map(a=>`<tr><td>${esc(a.name)}</td><td>${esc(a.status)}</td><td class="muted">${new Date(a.last_seen_at).toLocaleString()}</td></tr>`).join('');
-  document.querySelector('#approvals').innerHTML = (d.approvals||[]).map(a=>`
-    <div style="padding:12px 0;border-bottom:1px solid #2c425d">
-      <div><strong>${esc(a.action)}</strong></div>
-      <div class="muted" style="margin-top:4px">${esc(a.reason)}</div>
-      <div class="muted" style="margin-top:6px;font-size:12px">
-        Approval: ${esc(a.id)}<br>
-        Task: ${esc(a.task_id || 'â€”')}<br>
-        Status: ${esc(a.status || 'pending')}
-      </div>
-      <div style="margin-top:10px">
-        <button onclick="decide('${a.id}','approved')">Approve</button>
-        <button class="reject" onclick="decide('${a.id}','rejected')">Reject</button>
+      <div class="muted">
+        Local multi-agent orchestration · approval-first execution
       </div>
     </div>
-  `).join('') || '<span class="muted">None</span>';
-  document.querySelector('#activity').innerHTML = (d.activity||[]).map(a=>`<div><strong>${esc(a.event_type)}</strong> Â· ${esc(a.message)}<br><span class="muted">${new Date(a.created_at).toLocaleString()}</span></div>`).join('');
-}
-async function decide(id, decision){
-  const label = decision === 'approved' ? 'APPROVE' : 'REJECT';
-  const confirmed = window.confirm(
-    `${label} this approval?
 
-Approval ID: ${id}`
+    <div id="health" class="health">
+      <span class="health-dot"></span>
+      <span>Checking system…</span>
+    </div>
+  </header>
+
+  <section id="metrics" class="metrics"></section>
+
+  <section class="layout">
+
+    <div class="stack">
+
+      <div class="card">
+        <div class="card-header">
+          <h2>Task Operations</h2>
+          <span class="muted small">
+            Routing, execution and approval visibility
+          </span>
+        </div>
+
+        <div class="task-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Priority</th>
+                <th>Task</th>
+                <th>Owner / Route</th>
+                <th>Status</th>
+                <th class="task-view-cell">View</th>
+              </tr>
+            </thead>
+
+            <tbody id="tasks"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2>Recent Activity</h2>
+          <span class="muted small">Newest first</span>
+        </div>
+
+        <div id="activity" class="activity"></div>
+      </div>
+
+    </div>
+
+    <div class="stack">
+
+      <div class="card">
+      <div class="card-header">
+        <h2>Personal AI Assistant</h2>
+        <span class="muted small">Your primary command interface</span>
+      </div>
+
+      <form id="assistant-form">
+        <textarea
+          id="assistant-request"
+          name="request"
+          placeholder="Tell your Personal AI Assistant what you need..."
+          required
+        ></textarea>
+
+        <select id="assistant-priority" name="priority">
+          <option>Medium</option>
+          <option>Critical</option>
+          <option>High</option>
+          <option>Low</option>
+        </select>
+
+        <button id="assistant-submit" type="submit">
+          Send to Assistant
+        </button>
+      </form>
+
+      <div id="assistant-result" class="muted small" style="margin-top:10px">
+        Ready for your request.
+      </div>
+
+      <p class="muted small">
+        Requests are handed to the Orchestrator and remain subject to
+        approval and execution controls.
+      </p>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+          <h2>Approvals</h2>
+          <span id="approval-count" class="badge">0 pending</span>
+        </div>
+
+        <div id="approvals"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2>Agent Network</h2>
+          <span class="muted small">Live registry</span>
+        </div>
+
+        <div id="agents" class="agent-scroll"></div>
+      </div>
+
+      <div class="card">
+        <h2>New Local Task</h2>
+
+        <form id="task-form">
+
+          <input
+            name="title"
+            placeholder="Task title"
+            required
+          />
+
+          <textarea
+            name="description"
+            placeholder="Describe the work. The Orchestrator will route it to the appropriate specialist."
+            required
+          ></textarea>
+
+          <select name="priority">
+            <option>Medium</option>
+            <option>Critical</option>
+            <option>High</option>
+            <option>Low</option>
+          </select>
+
+          <button type="submit">
+            Add Task
+          </button>
+
+        </form>
+
+        <p class="muted small">
+          Tasks default to the Orchestrator. Sensitive external or destructive
+          actions remain subject to human approval controls.
+        </p>
+      </div>
+
+    </div>
+
+  </section>
+
+</main>
+
+<div
+  id="task-detail-modal"
+  class="task-detail-modal"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="task-detail-title"
+>
+  <div class="task-detail-dialog">
+    <div class="task-detail-header">
+      <div>
+        <h2 id="task-detail-title">Task Details</h2>
+        <div class="muted small">Read-only task record</div>
+      </div>
+
+      <div class="task-detail-actions">
+        <button
+          id="task-detail-copy"
+          type="button"
+          class="task-copy-button"
+        >
+          Copy
+        </button>
+
+        <button id="task-detail-close" type="button">
+          Close
+        </button>
+      </div>
+    </div>
+
+    <div
+      id="task-detail-content"
+      class="task-detail-body"
+    ></div>
+  </div>
+</div>
+
+
+<script>
+
+const esc = (value) =>
+  String(value ?? '')
+    .replace(
+      /[&<>"']/g,
+      c => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      }[c])
+    );
+
+const formatTime = (value) => {
+  if (!value) return '—';
+
+  const d = new Date(value);
+
+  return Number.isNaN(d.getTime())
+    ? '—'
+    : d.toLocaleString();
+};
+
+const statusBadge = (status) => {
+  const value = status || 'unknown';
+
+  return `
+    <span class="badge status-${esc(value)}">
+      ${esc(value.replaceAll('_', ' '))}
+    </span>
+  `;
+};
+
+
+let latestTaskSnapshot = [];
+
+function taskResultDisplay(task) {
+  const raw = task?.result_json;
+
+  if (!raw) return '—';
+
+  try {
+    const parsed =
+      typeof raw === 'string'
+        ? JSON.parse(raw)
+        : raw;
+
+    return JSON.stringify(parsed, null, 2);
+  } catch (_) {
+    return String(raw);
+  }
+}
+
+
+function taskDetailCopyText(task) {
+  const lines = [
+    `Task ID: ${task.id || '—'}`,
+    `Priority: ${task.priority || '—'}`,
+    `Status: ${task.status || '—'}`,
+    `Owner: ${task.agent_name || 'Orchestrator'}`,
+    `Routed Specialist: ${task.routed_specialist || '—'}`,
+    `Side Effect Level: ${task.side_effect_level || 'none'}`,
+    `Approval: ${
+      task.approval_id
+        ? `Linked · ${task.approval_id}`
+        : 'Not linked'
+    }`,
+    `Source: ${task.source || '—'}`,
+    `Created: ${formatTime(task.created_at)}`,
+    `Updated: ${formatTime(task.updated_at)}`,
+    `Started: ${formatTime(task.started_at)}`,
+    `Completed: ${formatTime(task.completed_at)}`,
+    '',
+    'TITLE',
+    task.title || '—',
+    '',
+    'FULL DESCRIPTION',
+    task.description || '—',
+    '',
+    'ROUTING REASON',
+    task.routing_reason || '—',
+    '',
+    'ERROR / FAILURE DETAIL',
+    task.error || '—',
+    '',
+    'RESULT / OUTPUT',
+    taskResultDisplay(task)
+  ];
+
+  return lines.join('\n');
+}
+
+function openTaskDetail(taskId) {
+  const task =
+    latestTaskSnapshot.find(
+      item => String(item.id) === String(taskId)
+    );
+
+  if (!task) return;
+
+  const modal =
+    document.querySelector('#task-detail-modal');
+
+  const content =
+    document.querySelector('#task-detail-content');
+
+  if (!modal || !content) return;
+
+  const field = (label, value) => `
+    <div class="task-detail-field">
+      <span class="task-detail-label">${esc(label)}</span>
+      <div>${esc(value ?? '—')}</div>
+    </div>
+  `;
+
+  content.innerHTML = `
+    <div class="task-detail-grid">
+      ${field('Task ID', task.id)}
+      ${field('Priority', task.priority)}
+      ${field('Status', task.status)}
+      ${field('Owner', task.agent_name || 'Orchestrator')}
+      ${field('Routed Specialist', task.routed_specialist || '—')}
+      ${field('Side Effect Level', task.side_effect_level || 'none')}
+      ${field(
+        'Approval',
+        task.approval_id
+          ? `Linked · ${task.approval_id}`
+          : 'Not linked'
+      )}
+      ${field('Source', task.source || '—')}
+      ${field('Created', formatTime(task.created_at))}
+      ${field('Updated', formatTime(task.updated_at))}
+      ${field('Started', formatTime(task.started_at))}
+      ${field('Completed', formatTime(task.completed_at))}
+    </div>
+
+    <div class="task-detail-section">
+      <span class="task-detail-label">Title</span>
+      <h3>${esc(task.title || '—')}</h3>
+    </div>
+
+    <div class="task-detail-section">
+      <span class="task-detail-label">Full Description</span>
+      <pre>${esc(task.description || '—')}</pre>
+    </div>
+
+    ${
+      task.routing_reason
+        ? `
+          <div class="task-detail-section">
+            <span class="task-detail-label">Routing Reason</span>
+            <pre>${esc(task.routing_reason)}</pre>
+          </div>
+        `
+        : ''
+    }
+
+    ${
+      task.error
+        ? `
+          <div class="task-detail-section">
+            <span class="task-detail-label">Error / Failure Detail</span>
+            <pre class="error">${esc(task.error)}</pre>
+          </div>
+        `
+        : ''
+    }
+
+    <div class="task-detail-section">
+      <span class="task-detail-label">Result / Output</span>
+      <pre>${esc(taskResultDisplay(task))}</pre>
+    </div>
+  `;
+
+  modal.dataset.taskId = String(task.id);
+  modal.classList.add('open');
+}
+
+function closeTaskDetail() {
+  document
+    .querySelector('#task-detail-modal')
+    ?.classList.remove('open');
+}
+
+async function refresh() {
+
+  try {
+
+    const response = await fetch('/api/summary');
+
+    if (!response.ok) {
+      throw new Error(`Summary request failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    const counts = data.task_counts || {};
+    const tasks = data.tasks || [];
+latestTaskSnapshot = tasks;
+    const approvals = data.approvals || [];
+    const agents = data.agents || [];
+    const activity = data.activity || [];
+
+    const runningAgents =
+      agents.filter(a => a.status === 'working').length;
+
+    document.querySelector('#health').innerHTML = `
+      <span class="health-dot"></span>
+      <span>System online · ${runningAgents} agent${runningAgents === 1 ? '' : 's'} working</span>
+    `;
+
+    const metrics = [
+      ['Queued', counts.queued || 0],
+      ['Running', counts.running || 0],
+      ['Awaiting Approval', counts.awaiting_approval || 0],
+      ['Completed', counts.completed || 0],
+      ['Failed', counts.failed || 0]
+    ];
+
+    document.querySelector('#metrics').innerHTML =
+      metrics.map(([label, value]) => `
+        <div class="metric-card">
+          <div class="metric-label">${esc(label)}</div>
+          <div class="metric-value">${esc(value)}</div>
+        </div>
+      `).join('');
+
+    document.querySelector('#tasks').innerHTML =
+      tasks.map(task => {
+
+        const routed = task.routed_specialist
+          ? `
+            <div class="routing">
+              <strong>Routed → ${esc(task.routed_specialist)}</strong>
+            </div>
+          `
+          : '';
+
+        const failure = '';
+
+        const latest = task.latest_activity_type
+          ? `
+            <div class="muted small" style="margin-top:6px">
+              Latest: ${esc(task.latest_activity_type)}
+              · ${esc(formatTime(task.latest_activity_at))}
+            </div>
+          `
+          : '';
+
+        return `
+          <tr
+            class="task-row-clickable"
+            data-task-id="${esc(task.id)}"
+            data-created-at="${esc(task.created_at || '')}"
+            tabindex="0"
+          >
+            <td class="priority-${esc(String(task.priority).toLowerCase())}">
+              ${esc(task.priority)}
+            </td>
+
+            <td>
+              <div class="task-title">
+                ${esc(task.title)}
+              </div>
+
+              <div class="task-description">
+                ${esc(task.description).slice(0, 200)}
+              </div>
+
+              ${failure}
+              ${latest}
+            </td>
+
+            <td>
+              <div>
+                ${esc(task.agent_name || 'Orchestrator')}
+              </div>
+
+              ${routed}
+            </td>
+
+            <td>
+              ${statusBadge(task.status)}
+
+              ${
+                task.approval_id
+                  ? `
+                    <div class="muted small" style="margin-top:6px">
+                      Approval linked
+                    </div>
+                  `
+                  : ''
+              }
+            </td>
+
+            <td class="task-view-cell">
+              <button
+                type="button"
+                class="task-view-button"
+                data-task-view="${esc(task.id)}"
+                aria-label="View task details"
+                title="View task details"
+              >&#128065;</button>
+            </td>
+          </tr>
+        `;
+      }).join('') ||
+      `
+        <tr>
+          <td colspan="5" class="empty">
+            No tasks
+          </td>
+        </tr>
+      `;
+
+    document.querySelector('#approval-count').textContent =
+      `${approvals.length} pending`;
+
+    document.querySelector('#approvals').innerHTML =
+      approvals.map(approval => {
+
+        let preview = {};
+
+        try {
+          preview = JSON.parse(
+            approval.display_payload_json || '{}'
+          );
+        } catch (_) {
+          preview = {};
+        }
+
+        const gmail =
+          preview.type === 'gmail_draft';
+
+        const content = gmail
+          ? `
+            <div class="approval-preview">
+
+              <h3>Gmail Draft</h3>
+
+              <div style="margin-top:8px">
+                <span class="muted">To:</span>
+                ${esc((preview.to || []).join(', '))}
+              </div>
+
+              ${
+                (preview.cc || []).length
+                  ? `
+                    <div>
+                      <span class="muted">Cc:</span>
+                      ${esc(preview.cc.join(', '))}
+                    </div>
+                  `
+                  : ''
+              }
+
+              ${
+                (preview.bcc || []).length
+                  ? `
+                    <div>
+                      <span class="muted">Bcc:</span>
+                      ${esc(preview.bcc.join(', '))}
+                    </div>
+                  `
+                  : ''
+              }
+
+              <div style="margin-top:7px">
+                <span class="muted">Subject:</span>
+                <strong>${esc(preview.subject || '')}</strong>
+              </div>
+
+              <div class="approval-body">
+                ${esc(preview.body || '')}
+              </div>
+
+            </div>
+          `
+          : (() => {
+              let technical = {};
+
+              try {
+                technical = JSON.parse(approval.action || '{}');
+              } catch (_) {
+                technical = {};
+              }
+
+              const request =
+                technical.request &&
+                typeof technical.request === 'object'
+                  ? technical.request
+                  : technical;
+
+              const capability =
+                request.capability || 'approval-required action';
+
+              const filePath =
+                request.path || 'Not provided';
+
+              const repositoryPath =
+                request.repository_path || '';
+
+              const verificationProfile =
+                request.verification_profile || 'Not specified';
+
+              const oldText =
+                request.old_text || '';
+
+              const newText =
+                request.new_text || '';
+
+              const expectedReplacements =
+                request.expected_replacements ?? '';
+
+              const actionLabel =
+                capability === 'replace_text'
+                  ? 'Replace text in a sandbox file'
+                  : capability.replaceAll('_', ' ');
+
+              const changePreview =
+                oldText || newText
+                  ? `
+                    <div class="approval-change">
+                      <div class="muted small">Proposed change</div>
+                      ${
+                        oldText
+                          ? `<div class="diff-line diff-remove">- ${esc(oldText)}</div>`
+                          : ''
+                      }
+                      ${
+                        newText
+                          ? `<div class="diff-line diff-add">+ ${esc(newText)}</div>`
+                          : ''
+                      }
+                    </div>
+                  `
+                  : '';
+
+              return `
+                <div class="approval-preview approval-human">
+                  <div class="approval-type-row">
+                    <strong>Code Change Approval</strong>
+                    <span class="badge">Human review required</span>
+                  </div>
+
+                  <div class="approval-field">
+                    <span class="muted small">Action</span>
+                    <strong>${esc(actionLabel)}</strong>
+                  </div>
+
+                  <div class="approval-field">
+                    <span class="muted small">File</span>
+                    <code class="approval-path">${esc(filePath)}</code>
+                  </div>
+
+                  ${
+                    repositoryPath
+                      ? `
+                        <div class="approval-field">
+                          <span class="muted small">Repository</span>
+                          <code class="approval-path">${esc(repositoryPath)}</code>
+                        </div>
+                      `
+                      : ''
+                  }
+
+                  ${changePreview}
+
+                  <div class="approval-field">
+                    <span class="muted small">Verification</span>
+                    <span>${esc(verificationProfile)}</span>
+                  </div>
+
+                  ${
+                    expectedReplacements !== ''
+                      ? `
+                        <div class="approval-field">
+                          <span class="muted small">Expected replacements</span>
+                          <span>${esc(expectedReplacements)}</span>
+                        </div>
+                      `
+                      : ''
+                  }
+
+                  <details class="approval-details">
+                    <summary>View technical details</summary>
+                    <pre>${esc(approval.action || '')}</pre>
+                  </details>
+                </div>
+              `;
+            })();
+
+        return `
+          <div class="approval">
+
+            ${content}
+
+            <div class="muted small" style="margin-top:9px">
+              ${esc(approval.reason || '')}
+            </div>
+
+            <div class="muted small" style="margin-top:7px">
+              Task: ${esc(approval.task_id || '—')}
+            </div>
+
+            <div style="margin-top:10px">
+
+              <button
+                onclick="decide('${esc(approval.id)}','approved')"
+              >
+                Approve
+              </button>
+
+              <button
+                class="reject"
+                onclick="decide('${esc(approval.id)}','rejected')"
+              >
+                Reject
+              </button>
+
+            </div>
+          </div>
+        `;
+      }).join('') ||
+      `<div class="empty">No approvals waiting</div>`;
+
+    document.querySelector('#agents').innerHTML =
+      agents.map(agent => {
+
+        const activeTask = agent.current_task_id
+          ? `
+            <div class="agent-task">
+              Current task:
+              ${esc(agent.current_task_id)}
+            </div>
+          `
+          : '';
+
+        return `
+          <div class="agent-card">
+
+            <div class="agent-row">
+
+              <div>
+                <strong>${esc(agent.name)}</strong>
+
+                ${
+                  agent.description
+                    ? `
+                      <div class="muted small" style="margin-top:3px">
+                        ${esc(agent.description)}
+                      </div>
+                    `
+                    : ''
+                }
+
+                ${activeTask}
+              </div>
+
+              ${statusBadge(agent.status)}
+
+            </div>
+
+            <div class="muted small" style="margin-top:6px">
+              Last seen:
+              ${esc(formatTime(agent.last_seen_at))}
+            </div>
+
+          </div>
+        `;
+      }).join('') ||
+      `<div class="empty">No registered agents</div>`;
+
+    document.querySelector('#activity').innerHTML =
+      activity.map(item => `
+        <div class="activity-item">
+
+          <strong>${esc(item.event_type)}</strong>
+
+          ${
+            item.agent_name
+              ? ` · ${esc(item.agent_name)}`
+              : ''
+          }
+
+          <div style="margin-top:3px">
+            ${esc(item.message)}
+          </div>
+
+          <div class="muted small" style="margin-top:4px">
+            ${esc(formatTime(item.created_at))}
+          </div>
+
+        </div>
+      `).join('') ||
+      `<div class="empty">No recent activity</div>`;
+
+    document.dispatchEvent(
+      new CustomEvent('command-center:refreshed')
+    );
+
+  } catch (error) {
+
+    document.querySelector('#health').innerHTML = `
+      <span
+        class="health-dot"
+        style="background:#ff9090;box-shadow:none"
+      ></span>
+
+      <span>Command Center unavailable</span>
+    `;
+
+    console.error(error);
+  }
+}
+
+async function decide(id, decision) {
+
+  const label =
+    decision === 'approved'
+      ? 'APPROVE'
+      : 'REJECT';
+
+  const confirmed = window.confirm(
+    `${label} this exact approval?\n\nApproval ID: ${id}`
   );
 
   if (!confirmed) return;
 
   const response = await fetch(
     `/api/approvals/${encodeURIComponent(id)}/${decision}`,
-    {method:'POST'}
+    {
+      method: 'POST'
+    }
   );
 
   if (!response.ok) {
-    let detail = `Approval decision failed (${response.status}).`;
+
+    let detail =
+      `Approval decision failed (${response.status}).`;
 
     try {
+
       const body = await response.json();
-      if (body.detail) detail = body.detail;
-    } catch (_) {
-      // Keep the HTTP fallback message.
-    }
+
+      if (body.detail) {
+        detail = body.detail;
+      }
+
+    } catch (_) {}
 
     window.alert(detail);
+
     return;
   }
 
   await refresh();
 }
-document.querySelector('#assistant-form').addEventListener('submit', async (e)=>{e.preventDefault(); const request=document.querySelector('#assistant-request').value.trim(); const priority=document.querySelector('#assistant-priority').value; const result=document.querySelector('#assistant-result'); const button=document.querySelector('#assistant-submit'); if(!request) return; button.disabled=true; button.textContent='Submitting...'; result.textContent='Submitting request to your Personal AI Assistant...'; try{const response=await fetch('/api/assistant/handoff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request,priority})}); const body=await response.json(); if(!response.ok){throw new Error(body.detail || `Assistant request failed (${response.status}).`);} const approvalText=body.requires_approval ? ' · Human approval required' : ''; result.textContent=`Accepted · ${body.status}${approvalText} · Task ${body.task_id}`; document.querySelector('#assistant-request').value=''; await refresh();}catch(error){result.textContent=error.message || 'Assistant request failed.';}finally{button.disabled=false; button.textContent='Send to Assistant';}});
-document.querySelector('#task-form').addEventListener('submit', async (e)=>{e.preventDefault(); const f=new FormData(e.target); await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.fromEntries(f))}); e.target.reset(); refresh();});
-refresh(); setInterval(refresh,5000);
+
+document
+  .querySelector('#assistant-form')
+  .addEventListener(
+    'submit',
+    async event => {
+
+      event.preventDefault();
+
+      const requestInput =
+        document.querySelector('#assistant-request');
+
+      const priorityInput =
+        document.querySelector('#assistant-priority');
+
+      const submitButton =
+        document.querySelector('#assistant-submit');
+
+      const result =
+        document.querySelector('#assistant-result');
+
+      const request =
+        requestInput.value.trim();
+
+      if (!request) return;
+
+      submitButton.disabled = true;
+      submitButton.textContent = 'Submitting...';
+
+      result.textContent =
+        'Submitting request to your Personal AI Assistant...';
+
+      try {
+
+        const response = await fetch(
+          '/api/assistant/handoff',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              request,
+              priority: priorityInput.value
+            })
+          }
+        );
+
+        let body = {};
+
+        try {
+          body = await response.json();
+        } catch (_) {}
+
+        if (!response.ok) {
+          throw new Error(
+            body.detail ||
+            `Assistant request failed (${response.status}).`
+          );
+        }
+
+        const approvalText =
+          body.requires_approval
+            ? ' · Human approval required'
+            : '';
+
+        result.textContent =
+          `Accepted · ${body.status}` +
+          ` · ${body.agent_name}` +
+          approvalText;
+
+        requestInput.value = '';
+
+        await refresh();
+
+      } catch (error) {
+
+        result.textContent =
+          `Assistant error: ${error.message}`;
+
+      } finally {
+
+        submitButton.disabled = false;
+        submitButton.textContent = 'Send to Assistant';
+
+      }
+    }
+  );
+
+document
+  .querySelector('#task-form')
+  .addEventListener(
+    'submit',
+    async event => {
+
+      event.preventDefault();
+
+      const form = new FormData(event.target);
+
+      const payload =
+        Object.fromEntries(form);
+
+      const response = await fetch(
+        '/api/tasks',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        }
+      );
+
+      if (!response.ok) {
+
+        window.alert(
+          `Task creation failed (${response.status}).`
+        );
+
+        return;
+      }
+
+      event.target.reset();
+
+      await refresh();
+    }
+  );
+
+document
+  .querySelector('#tasks')
+  .addEventListener('click', event => {
+    const button =
+      event.target.closest('[data-task-view]');
+
+    if (!button) return;
+
+    event.stopPropagation();
+    openTaskDetail(button.dataset.taskView);
+  });
+
+document
+  .querySelector('#task-detail-copy')
+  .addEventListener('click', async () => {
+    const modal =
+      document.querySelector('#task-detail-modal');
+
+    const taskId =
+      modal?.dataset?.taskId;
+
+    const task =
+      latestTaskSnapshot.find(
+        item => String(item.id) === String(taskId)
+      );
+
+    if (!task) return;
+
+    const text =
+      taskDetailCopyText(task);
+
+    try {
+      await navigator.clipboard.writeText(text);
+
+      const button =
+        document.querySelector('#task-detail-copy');
+
+      if (button) {
+        const original =
+          button.textContent;
+
+        button.textContent = 'Copied';
+
+        window.setTimeout(() => {
+          button.textContent = original;
+        }, 1200);
+      }
+    } catch (_) {
+      window.prompt(
+        'Copy task details:',
+        text
+      );
+    }
+  });
+
+document
+  .querySelector('#task-detail-close')
+  .addEventListener('click', closeTaskDetail);
+
+document
+  .querySelector('#task-detail-modal')
+  .addEventListener('click', event => {
+    if (event.target.id === 'task-detail-modal') {
+      closeTaskDetail();
+    }
+  });
+
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') {
+    closeTaskDetail();
+  }
+});
+
+refresh();
+
+setInterval(refresh, 5000);
+
 </script>
-</body></html>
+
+
+<script id="phase10-filter-controls-v1">
+(() => {
+  'use strict';
+
+  const priorityWeight = {
+    critical: 1,
+    high: 2,
+    medium: 3,
+    low: 4
+  };
+
+  const STORAGE_KEYS = {
+    taskPriority: 'dashboard.task.priority',
+    taskOwner: 'dashboard.task.owner',
+    taskStatus: 'dashboard.task.status',
+    agentSearch: 'dashboard.agent.search',
+    agentStatus: 'dashboard.agent.status',
+    activitySort: 'dashboard.activity.sort'
+  };
+
+  function loadDashboardSetting(key, fallback = '') {
+    try {
+      return localStorage.getItem(key) ?? fallback;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  function saveDashboardSetting(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch (_) {
+      // Browser storage may be unavailable; filtering still works in memory.
+    }
+  }
+
+  function removeDashboardSetting(key) {
+    try {
+      localStorage.removeItem(key);
+    } catch (_) {
+      // Ignore unavailable browser storage.
+    }
+  }
+
+  const findHeading = (text) =>
+    [...document.querySelectorAll('h1,h2,h3')]
+      .find(el => el.textContent.trim().toLowerCase() === text.toLowerCase());
+
+  const firstVisualLine = (element) => {
+    if (!element) return '';
+    const lines = (element.innerText || element.textContent || '')
+      .split(/\r?\n/)
+      .map(v => v.trim())
+      .filter(Boolean);
+
+    return lines[0] || '';
+  };
+
+  function getTaskRows() {
+    const tbody = document.querySelector('#tasks');
+    if (!tbody) return [];
+
+    return [...tbody.querySelectorAll('tr')]
+      .filter(row => row.cells && row.cells.length >= 4);
+  }
+
+  function taskPriority(row) {
+    return firstVisualLine(row.cells[0]).toLowerCase();
+  }
+
+  function taskOwner(row) {
+    return firstVisualLine(row.cells[2]);
+  }
+
+  function taskStatus(row) {
+    const statusElement =
+      [...row.querySelectorAll('[class*="status-"]')]
+        .find(el =>
+          [...el.classList].some(name => name.startsWith('status-'))
+        );
+
+    if (statusElement) {
+      const statusClass =
+        [...statusElement.classList]
+          .find(name => name.startsWith('status-'));
+
+      if (statusClass) {
+        return statusClass.replace(/^status-/, '').toLowerCase();
+      }
+    }
+
+    return firstVisualLine(row.cells[3])
+      .toLowerCase()
+      .replace(/\s+/g, '_');
+  }
+
+  function taskCreatedAt(row) {
+    const value =
+      row?.dataset?.createdAt || '';
+
+    const timestamp =
+      Date.parse(value);
+
+    return Number.isNaN(timestamp)
+      ? 0
+      : timestamp;
+  }
+
+  function installTaskFilters() {
+    if (document.querySelector('#task-dashboard-filters')) return;
+
+    const heading = findHeading('Task Operations');
+    if (!heading) return;
+
+    const card = heading.closest('.card');
+    if (!card) return;
+
+    const header = heading.closest('.card-header') || heading.parentElement;
+
+    const bar = document.createElement('div');
+    bar.id = 'task-dashboard-filters';
+    bar.className = 'dashboard-filter-bar';
+
+    bar.innerHTML = `
+      <span class="dashboard-filter-label">Priority</span>
+      <select id="task-priority-filter">
+        <option value="all">All priorities</option>
+        <option value="critical">Critical</option>
+        <option value="high">High</option>
+        <option value="medium">Medium</option>
+        <option value="low">Low</option>
+      </select>
+
+      <span class="dashboard-filter-label">Owner</span>
+      <select id="task-owner-filter">
+        <option value="all">All owners</option>
+      </select>
+
+      <span class="dashboard-filter-label">Status</span>
+      <select id="task-status-filter">
+        <option value="all">All statuses</option>
+        <option value="queued">Queued</option>
+        <option value="running">Running</option>
+        <option value="awaiting_approval">Awaiting approval</option>
+        <option value="completed">Completed</option>
+        <option value="failed">Failed</option>
+        <option value="blocked">Blocked</option>
+        <option value="partial">Partial</option>
+      </select>
+
+      <button type="button" id="task-filter-reset">Reset</button>
+
+      <span id="task-filter-count" class="filter-match-count"></span>
+    `;
+
+    header.insertAdjacentElement('afterend', bar);
+
+    const prioritySelect =
+      document.querySelector('#task-priority-filter');
+    const ownerSelect =
+      document.querySelector('#task-owner-filter');
+    const statusSelect =
+      document.querySelector('#task-status-filter');
+
+    prioritySelect.value =
+      loadDashboardSetting(STORAGE_KEYS.taskPriority, 'all');
+
+    statusSelect.value =
+      loadDashboardSetting(STORAGE_KEYS.taskStatus, 'all');
+
+    prioritySelect.addEventListener('change', () => {
+      saveDashboardSetting(
+        STORAGE_KEYS.taskPriority,
+        prioritySelect.value
+      );
+      applyTaskFilters();
+    });
+
+    ownerSelect.addEventListener('change', () => {
+      saveDashboardSetting(
+        STORAGE_KEYS.taskOwner,
+        ownerSelect.value
+      );
+      applyTaskFilters();
+    });
+
+    statusSelect.addEventListener('change', () => {
+      saveDashboardSetting(
+        STORAGE_KEYS.taskStatus,
+        statusSelect.value
+      );
+      applyTaskFilters();
+    });
+
+    document
+      .querySelector('#task-filter-reset')
+      .addEventListener('click', () => {
+        prioritySelect.value = 'all';
+        ownerSelect.value = 'all';
+        statusSelect.value = 'all';
+
+        removeDashboardSetting(STORAGE_KEYS.taskPriority);
+        removeDashboardSetting(STORAGE_KEYS.taskOwner);
+        removeDashboardSetting(STORAGE_KEYS.taskStatus);
+
+        applyTaskFilters();
+      });
+  }
+
+  function synchronizeTaskOwners() {
+    const select = document.querySelector('#task-owner-filter');
+    if (!select) return;
+
+    const selected =
+      select.value !== 'all'
+        ? select.value
+        : loadDashboardSetting(STORAGE_KEYS.taskOwner, 'all');
+
+    const owners =
+      [...new Set(
+        getTaskRows()
+          .map(taskOwner)
+          .filter(Boolean)
+      )].sort((a, b) => a.localeCompare(b));
+
+    const signature = owners.join('|');
+
+    if (select.dataset.signature === signature) return;
+
+    select.innerHTML =
+      `<option value="all">All owners</option>` +
+      owners.map(owner =>
+        `<option value="${escapeAttribute(owner)}">${escapeHtml(owner)}</option>`
+      ).join('');
+
+    select.dataset.signature = signature;
+
+    if (owners.includes(selected)) {
+      select.value = selected;
+    } else {
+      select.value = 'all';
+    }
+  }
+
+  function applyTaskFilters() {
+    const rows = getTaskRows();
+    if (!rows.length) return;
+
+    const priority =
+      document.querySelector('#task-priority-filter')?.value || 'all';
+
+    const owner =
+      document.querySelector('#task-owner-filter')?.value || 'all';
+
+    const status =
+      document.querySelector('#task-status-filter')?.value || 'all';
+
+    const sorted = [...rows].sort((a, b) => {
+      const aCreated = taskCreatedAt(a);
+      const bCreated = taskCreatedAt(b);
+
+      return bCreated - aCreated;
+    });
+
+    const parent = rows[0].parentElement;
+
+    sorted.forEach(row => parent.appendChild(row));
+
+    let visible = 0;
+
+    sorted.forEach(row => {
+      const matchesPriority =
+        priority === 'all' || taskPriority(row) === priority;
+
+      const matchesOwner =
+        owner === 'all' || taskOwner(row) === owner;
+
+      const matchesStatus =
+        status === 'all' || taskStatus(row) === status;
+
+      const matches =
+        matchesPriority &&
+        matchesOwner &&
+        matchesStatus;
+
+      row.style.display = matches ? '' : 'none';
+
+      if (matches) visible += 1;
+    });
+
+    const count = document.querySelector('#task-filter-count');
+
+    if (count) {
+      count.textContent =
+        visible === rows.length
+          ? `${rows.length} tasks`
+          : `${visible} of ${rows.length}`;
+    }
+  }
+
+  function installAgentFilters() {
+    if (document.querySelector('#agent-dashboard-filters')) return;
+
+    const heading = findHeading('Agent Network');
+    if (!heading) return;
+
+    const header = heading.closest('.card-header') || heading.parentElement;
+
+    const bar = document.createElement('div');
+    bar.id = 'agent-dashboard-filters';
+    bar.className = 'dashboard-filter-bar';
+
+    bar.innerHTML = `
+      <input
+        id="agent-search-filter"
+        type="search"
+        placeholder="Search agents..."
+        autocomplete="off"
+      >
+
+      <select id="agent-status-filter">
+        <option value="all">All statuses</option>
+        <option value="working">Working</option>
+        <option value="idle">Idle</option>
+        <option value="placeholder">Placeholder</option>
+      </select>
+
+      <span id="agent-filter-count" class="filter-match-count"></span>
+    `;
+
+    header.insertAdjacentElement('afterend', bar);
+
+    const searchInput =
+      document.querySelector('#agent-search-filter');
+    const statusSelect =
+      document.querySelector('#agent-status-filter');
+
+    searchInput.value =
+      loadDashboardSetting(STORAGE_KEYS.agentSearch, '');
+
+    statusSelect.value =
+      loadDashboardSetting(STORAGE_KEYS.agentStatus, 'all');
+
+    searchInput.addEventListener('input', () => {
+      saveDashboardSetting(
+        STORAGE_KEYS.agentSearch,
+        searchInput.value
+      );
+      applyAgentFilters();
+    });
+
+    statusSelect.addEventListener('change', () => {
+      saveDashboardSetting(
+        STORAGE_KEYS.agentStatus,
+        statusSelect.value
+      );
+      applyAgentFilters();
+    });
+  }
+
+  function getAgentStatus(card) {
+    const text = (card.innerText || card.textContent || '').toLowerCase();
+
+    if (/\bworking\b/.test(text)) return 'working';
+    if (/\bplaceholder\b/.test(text)) return 'placeholder';
+    if (/\bidle\b/.test(text)) return 'idle';
+
+    return '';
+  }
+
+  function applyAgentFilters() {
+    const container = document.querySelector('#agents');
+    if (!container) return;
+
+    const cards = [...container.querySelectorAll('.agent-card')];
+
+    const query =
+      (document.querySelector('#agent-search-filter')?.value || '')
+        .trim()
+        .toLowerCase();
+
+    const status =
+      document.querySelector('#agent-status-filter')?.value || 'all';
+
+    let visible = 0;
+
+    cards.forEach(card => {
+      const text =
+        (card.innerText || card.textContent || '').toLowerCase();
+
+      const matchesSearch =
+        !query || text.includes(query);
+
+      const matchesStatus =
+        status === 'all' || getAgentStatus(card) === status;
+
+      const matches = matchesSearch && matchesStatus;
+
+      card.style.display = matches ? '' : 'none';
+
+      if (matches) visible += 1;
+    });
+
+    const count = document.querySelector('#agent-filter-count');
+
+    if (count) {
+      count.textContent =
+        visible === cards.length
+          ? `${cards.length} agents`
+          : `${visible} of ${cards.length}`;
+    }
+  }
+
+  function installActivitySort() {
+    if (document.querySelector('#activity-sort-filter')) return;
+
+    const heading = findHeading('Recent Activity');
+    if (!heading) return;
+
+    const header = heading.closest('.card-header') || heading.parentElement;
+
+    const existingRight =
+      [...header.children]
+        .find(el =>
+          el !== heading &&
+          /newest first|oldest first/i.test(el.textContent || '')
+        );
+
+    if (existingRight) existingRight.remove();
+
+    const select = document.createElement('select');
+    select.id = 'activity-sort-filter';
+    select.className = 'activity-sort-control';
+
+    select.innerHTML = `
+      <option value="newest">Newest first</option>
+      <option value="oldest">Oldest first</option>
+    `;
+
+    header.appendChild(select);
+
+    select.value =
+      loadDashboardSetting(STORAGE_KEYS.activitySort, 'newest');
+
+    select.addEventListener('change', () => {
+      saveDashboardSetting(
+        STORAGE_KEYS.activitySort,
+        select.value
+      );
+      applyActivitySort();
+    });
+  }
+
+  function findActivityContainer() {
+    const direct =
+      document.querySelector(
+        '#activity, #recent-activity, .activity-list, .activity-scroll, .recent-activity-list'
+      );
+
+    if (direct) return direct;
+
+    const heading = findHeading('Recent Activity');
+    const card = heading?.closest('.card');
+
+    if (!card) return null;
+
+    const candidates =
+      [...card.querySelectorAll('div')]
+        .filter(el =>
+          !el.classList.contains('card-header') &&
+          !el.classList.contains('dashboard-filter-bar') &&
+          el.childElementCount >= 2
+        );
+
+    const scrollable =
+      candidates.find(el =>
+        el.scrollHeight > el.clientHeight + 10
+      );
+
+    if (scrollable) return scrollable;
+
+    return candidates
+      .sort((a, b) => b.childElementCount - a.childElementCount)[0] || null;
+  }
+
+  function activityTimestamp(element) {
+    const text = element.innerText || element.textContent || '';
+
+    const match = text.match(
+      /\d{1,2}\/\d{1,2}\/\d{4},?\s+\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)/i
+    );
+
+    if (!match) return null;
+
+    const value = Date.parse(match[0].replace(',', ''));
+
+    return Number.isNaN(value) ? null : value;
+  }
+
+  function applyActivitySort() {
+    const container = findActivityContainer();
+    if (!container) return;
+
+    const order =
+      document.querySelector('#activity-sort-filter')?.value || 'newest';
+
+    const children =
+      [...container.children]
+        .filter(el =>
+          !el.classList.contains('dashboard-filter-bar') &&
+          el.id !== 'activity-sort-filter'
+        );
+
+    if (children.length < 2) return;
+
+    const decorated = children.map((element, index) => ({
+      element,
+      index,
+      timestamp: activityTimestamp(element)
+    }));
+
+    decorated.sort((a, b) => {
+      if (a.timestamp === null && b.timestamp === null) {
+        return a.index - b.index;
+      }
+
+      if (a.timestamp === null) return 1;
+      if (b.timestamp === null) return -1;
+
+      return order === 'oldest'
+        ? a.timestamp - b.timestamp
+        : b.timestamp - a.timestamp;
+    });
+
+    const current = children;
+    const desired = decorated.map(item => item.element);
+
+    const alreadyCorrect =
+      current.every((node, index) => node === desired[index]);
+
+    if (!alreadyCorrect) {
+      desired.forEach(node => container.appendChild(node));
+    }
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  function escapeAttribute(value) {
+    return escapeHtml(value);
+  }
+
+  function refreshDashboardControls() {
+    installTaskFilters();
+    installAgentFilters();
+    installActivitySort();
+
+    synchronizeTaskOwners();
+    applyTaskFilters();
+    applyAgentFilters();
+    applyActivitySort();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener(
+      'DOMContentLoaded',
+      refreshDashboardControls
+    );
+  } else {
+    refreshDashboardControls();
+  }
+
+  /*
+    Re-apply filters and sorting immediately after the dashboard
+    finishes rendering fresh API data. Avoid competing refresh timers.
+  */
+  document.addEventListener(
+    'command-center:refreshed',
+    refreshDashboardControls
+  );
+})();
+</script>
+
+</body>
+</html>
+
+
+
+
+
+
+
+

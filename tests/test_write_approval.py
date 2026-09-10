@@ -5,6 +5,7 @@ import pytest
 from write_approval import (
     VerifiedEditRequest,
     VerifiedFileWriteRequest,
+    VerifiedGmailDraftRequest,
     approval_action_for_request,
     validate_stored_approval,
 )
@@ -248,3 +249,103 @@ def test_modified_file_write_path_invalidates_approval() -> None:
 
     with pytest.raises(PermissionError):
         validate_stored_approval(row, modified)
+
+
+def make_gmail_draft_request(
+    *,
+    task_id: str = "task-gmail-001",
+    capability: str = "gmail.draft.create",
+    to: tuple[str, ...] = ("recipient@example.com",),
+    subject: str = "Test subject",
+    body: str = "Test body",
+    cc: tuple[str, ...] = (),
+    bcc: tuple[str, ...] = (),
+) -> VerifiedGmailDraftRequest:
+    return VerifiedGmailDraftRequest(
+        task_id=task_id,
+        capability=capability,
+        to=to,
+        subject=subject,
+        body=body,
+        cc=cc,
+        bcc=bcc,
+    )
+
+
+def make_approved_gmail_draft_row(
+    request: VerifiedGmailDraftRequest,
+) -> dict[str, object]:
+    return {
+        "id": "approval-gmail-001",
+        "task_id": request.task_id,
+        "action": approval_action_for_request(request),
+        "reason": "Verified Gmail draft approval",
+        "status": "approved",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "decided_at": datetime.now(timezone.utc).isoformat(),
+        "decided_by": "test-user",
+    }
+
+
+def test_exact_gmail_draft_approval_validates() -> None:
+    request = make_gmail_draft_request()
+    row = make_approved_gmail_draft_row(request)
+
+    approval = validate_stored_approval(row, request)
+
+    assert approval.task_id == request.task_id
+    assert approval.capability == "gmail.draft.create"
+    assert approval.status == "approved"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("to", ("other@example.com",)),
+        ("subject", "Changed subject"),
+        ("body", "Changed body"),
+        ("cc", ("cc@example.com",)),
+        ("bcc", ("bcc@example.com",)),
+        ("capability", "gmail.other"),
+    ],
+)
+def test_modified_gmail_draft_invalidates_approval(
+    field: str,
+    value: object,
+) -> None:
+    original = make_gmail_draft_request()
+    row = make_approved_gmail_draft_row(original)
+
+    kwargs = {
+        "task_id": original.task_id,
+        "capability": original.capability,
+        "to": original.to,
+        "subject": original.subject,
+        "body": original.body,
+        "cc": original.cc,
+        "bcc": original.bcc,
+    }
+    kwargs[field] = value
+
+    modified = VerifiedGmailDraftRequest(**kwargs)
+
+    with pytest.raises(PermissionError):
+        validate_stored_approval(row, modified)
+
+
+def test_gmail_draft_body_is_hashed_in_canonical_payload() -> None:
+    request = make_gmail_draft_request()
+
+    payload = request.canonical_payload()
+
+    assert "body" not in payload
+    assert "body_sha256" in payload
+    assert payload["body_sha256"]
+
+
+def test_gmail_draft_action_type_is_distinct() -> None:
+    request = make_gmail_draft_request()
+
+    action = approval_action_for_request(request)
+
+    assert '"type":"verified_gmail_draft"' in action
