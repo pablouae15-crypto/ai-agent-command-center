@@ -44,3 +44,13 @@ def test_dashboard_reports_approval_api_failures() -> None:
     assert "await response.json()" in html
     assert "window.alert(detail)" in html
     assert "encodeURIComponent(id)" in html
+
+def test_dashboard_contains_archive_task_controls() -> None:
+    html = Path(
+        r"D:\AI-Agent-Command-Center\static\index.html"
+    ).read_text(encoding="utf-8")
+
+    assert "data-task-archive" in html
+    assert "Archive this task from the active dashboard view?" in html
+    assert "/api/tasks/${encodeURIComponent(taskId)}/archive" in html
+    assert "Task archive failed" in html
