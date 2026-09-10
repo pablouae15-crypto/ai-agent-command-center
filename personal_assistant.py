@@ -24,6 +24,20 @@ class PersonalAssistantHandoffResult(BaseModel):
     approval_id: str | None = None
 
 
+def should_defer_exact_approval(request_text: str) -> bool:
+    """Return true when a handoff should wait for an exact verified approval."""
+    content = request_text.lower()
+    verified_execution_markers = (
+        "use verified replace text",
+        "verified replace text",
+        "verified_replace_text",
+        "use verified write text file",
+        "verified write text file",
+        "verified_write_text_file",
+    )
+    return any(marker in content for marker in verified_execution_markers)
+
+
 def _default_title(request: str) -> str:
     compact = " ".join(request.strip().split())
 
@@ -103,6 +117,7 @@ def handoff_to_command_center(
         priority=request.priority,
         side_effect_level=request.side_effect_level,
         requires_approval=False,
+        defer_exact_approval=should_defer_exact_approval(original_request),
         source="personal-assistant",
         metadata={
             "workflow_type": "personal_assistant_handoff",

@@ -25,7 +25,9 @@ def _verified_edit_request_from_task(
         or ""
     ).strip()
 
-    pattern = re.compile(
+    sandbox_root = r"D:\Shared-Local-Execution-Engine-Sandbox"
+
+    legacy_pattern = re.compile(
         r'In\s+(?P<path>[A-Za-z]:\\[^,\r\n]+),\s*'
         r'replace exactly\s+"(?P<old>.*?)"\s+with\s+"(?P<new>.*?)"\.\s*'
         r'Use the approved verified replace_text workflow with repository path\s+'
@@ -33,17 +35,33 @@ def _verified_edit_request_from_task(
         re.IGNORECASE | re.DOTALL,
     )
 
-    match = pattern.search(text)
+    dashboard_pattern = re.compile(
+        r'Use\s+verified\s+replace\s+text\s+to\s+update\s+'
+        r'(?P<path>[A-Za-z]:\\[^\r\n]+?)\.\s*'
+        r'Replace\s+exactly\s+this\s+text:\s*'
+        r'(?P<old>.*?)\s*'
+        r'With\s+exactly\s+this\s+text:\s*'
+        r'(?P<new>.*?)\s*'
+        r'Do\s+not\s+modify\s+any\s+other\s+file\.',
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    match = legacy_pattern.search(text)
+    repository_path = sandbox_root
+
+    if match:
+        repository_path = match.group("repo").strip()
+    else:
+        match = dashboard_pattern.search(text)
 
     if not match:
         return None
 
-    path = match.group("path").strip()
-    repository_path = match.group("repo").strip()
+    file_path = match.group("path").strip()
+    old_text = match.group("old").strip()
+    new_text = match.group("new").strip()
 
-    sandbox_root = r"D:\Shared-Local-Execution-Engine-Sandbox"
-
-    if not path.lower().startswith(sandbox_root.lower() + "\\"):
+    if not file_path.lower().startswith(sandbox_root.lower() + "\\"):
         return None
 
     if repository_path.lower() != sandbox_root.lower():
@@ -52,11 +70,11 @@ def _verified_edit_request_from_task(
     return VerifiedEditRequest(
         task_id=str(task["id"]),
         capability="replace_text",
-        path=path,
+        path=file_path,
         repository_path=repository_path,
         verification_profile="sandbox_pytest",
-        old_text=match.group("old"),
-        new_text=match.group("new"),
+        old_text=old_text,
+        new_text=new_text,
         expected_replacements=1,
     )
 
@@ -170,6 +188,22 @@ class Runtime:
                         metadata = json.loads(
                             task.get("metadata_json") or "{}"
                         )
+
+                        if (
+                            metadata.get("_defer_exact_approval")
+                            and not task.get("approval_id")
+                        ):
+                            exact_request = _verified_edit_request_from_task(
+                                task,
+                                metadata,
+                            )
+
+                            if exact_request is not None:
+                                self.store.create_exact_approval(
+                                    exact_request,
+                                    reason="Execute this exact verified edit",
+                                )
+                                continue
 
                         if (
                             metadata.get("workflow_type")

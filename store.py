@@ -192,7 +192,14 @@ class TaskStore:
         if side_effect_level not in {"none", "external", "destructive"}:
             raise ValueError("side_effect_level must be none, external, or destructive")
         requires_approval = bool(requires_approval or side_effect_level != "none")
-        initial_status = "awaiting_approval" if requires_approval else "queued"
+        metadata_payload = dict(metadata or {})
+        if defer_exact_approval:
+            metadata_payload["_defer_exact_approval"] = True
+        initial_status = (
+            "awaiting_approval"
+            if requires_approval and not defer_exact_approval
+            else "queued"
+        )
         task_id = str(uuid.uuid4())
         now = utc_now()
         with self._lock, self._connect() as db:
@@ -204,7 +211,7 @@ class TaskStore:
                 (
                     task_id, title, description, agent_name, priority,
                     initial_status, side_effect_level, int(requires_approval), source,
-                    now, now, due_at, json.dumps(metadata or {}),
+                    now, now, due_at, json.dumps(metadata_payload),
                 ),
             )
         self.add_activity("task.created", f"Task created: {title}", task_id=task_id, agent_name=agent_name,
@@ -239,6 +246,10 @@ class TaskStore:
                    WHERE status='queued'
                      AND (
                          requires_approval=0
+                         OR (
+                             approval_id IS NULL
+                             AND json_extract(metadata_json, '$._defer_exact_approval') = 1
+                         )
                          OR EXISTS (
                              SELECT 1
                              FROM approvals
@@ -909,4 +920,5 @@ class TaskStore:
         next_run = (datetime.now(timezone.utc) + timedelta(seconds=interval_seconds)).isoformat()
         with self._lock, self._connect() as db:
             db.execute("UPDATE recurring_jobs SET next_run_at=? WHERE id=?", (next_run, job_id))
+
 

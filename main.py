@@ -164,6 +164,20 @@ def classify_task_side_effect(
     return "none"
 
 
+def should_defer_exact_approval(title: str, description: str) -> bool:
+    """Return true when a task should wait for an exact verified approval."""
+    content = f"{title}\n{description}".lower()
+    verified_execution_markers = (
+        "use verified replace text",
+        "verified replace text",
+        "verified_replace_text",
+        "use verified write text file",
+        "verified write text file",
+        "verified_write_text_file",
+    )
+    return any(marker in content for marker in verified_execution_markers)
+
+
 class GmailDraftApprovalRequest(BaseModel):
     to: list[str] = Field(min_length=1)
     cc: list[str] = Field(default_factory=list)
@@ -243,6 +257,10 @@ def create_task(request: TaskCreate) -> dict:
     payload["side_effect_level"] = inferred_level
     payload["requires_approval"] = bool(
         request.requires_approval or inferred_level != "none"
+    )
+    payload["defer_exact_approval"] = should_defer_exact_approval(
+        request.title,
+        request.description,
     )
 
     return store.create_task(**payload)
