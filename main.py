@@ -62,6 +62,105 @@ class TaskCreate(BaseModel):
     side_effect_level: Literal["none", "external", "destructive"] = "none"
     requires_approval: bool = False
 
+def classify_task_side_effect(
+    title: str,
+    description: str,
+    explicit_level: str = "none",
+) -> str:
+    """Conservatively classify obvious task side effects before execution."""
+    if explicit_level in {"external", "destructive"}:
+        return explicit_level
+
+    content = f"{title}\n{description}".lower()
+
+    # Ignore explicitly negated mutation phrases so genuinely read-only
+    # inspection requests are not incorrectly classified as side-effecting.
+    actionable_content = content
+    for phrase in (
+        "do not modify",
+        "do not edit",
+        "do not write",
+        "do not overwrite",
+        "do not replace",
+        "do not rename",
+        "do not move",
+        "do not delete",
+        "do not remove",
+        "do not erase",
+        "without modifying",
+        "without editing",
+        "without changing",
+        "no changes",
+    ):
+        actionable_content = actionable_content.replace(phrase, "")
+
+    destructive_actions = (
+        "delete ",
+        "remove ",
+        "erase ",
+        "drop ",
+        "destroy ",
+    )
+
+    external_actions = (
+        "replace ",
+        "modify ",
+        "edit ",
+        "write ",
+        "overwrite ",
+        "rename ",
+        "move ",
+        "create file",
+        "save file",
+        "send email",
+        "send the email",
+        "modify calendar",
+        "create calendar",
+        "delete calendar",
+        "deploy ",
+        "install ",
+        "uninstall ",
+        "execute command",
+        "run command",
+    )
+
+    file_or_system_target = (
+        "\\" in content
+        or ":\\" in content
+        or ".py" in content
+        or ".js" in content
+        or ".ts" in content
+        or ".html" in content
+        or ".css" in content
+        or ".json" in content
+        or ".sql" in content
+        or ".yaml" in content
+        or ".yml" in content
+        or " file" in content
+        or "repository" in content
+        or "database" in content
+    )
+
+    if file_or_system_target and any(action in actionable_content for action in destructive_actions):
+        return "destructive"
+
+    if file_or_system_target and any(action in actionable_content for action in external_actions):
+        return "external"
+
+    account_side_effects = (
+        "send email",
+        "send the email",
+        "create calendar",
+        "modify calendar",
+        "delete calendar",
+        "deploy ",
+    )
+
+    if any(action in content for action in account_side_effects):
+        return "external"
+
+    return "none"
+
 
 @app.get("/health")
 def health() -> dict:
@@ -105,7 +204,20 @@ def tasks() -> list[dict]:
 
 @app.post("/api/tasks", status_code=201)
 def create_task(request: TaskCreate) -> dict:
-    return store.create_task(**request.model_dump())
+    payload = request.model_dump()
+
+    inferred_level = classify_task_side_effect(
+        request.title,
+        request.description,
+        request.side_effect_level,
+    )
+
+    payload["side_effect_level"] = inferred_level
+    payload["requires_approval"] = bool(
+        request.requires_approval or inferred_level != "none"
+    )
+
+    return store.create_task(**payload)
 
 
 @app.post("/api/approvals/{approval_id}/{decision}")
