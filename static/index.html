@@ -1346,6 +1346,10 @@ latestTaskSnapshot = tasks;
           `
           : '';
 
+        const canArchive =
+          ['completed', 'failed', 'blocked', 'partial']
+            .includes(task.status);
+
         return `
           <tr
             class="task-row-clickable"
@@ -1400,6 +1404,20 @@ latestTaskSnapshot = tasks;
                 aria-label="View task details"
                 title="View task details"
               >&#128065;</button>
+
+              ${
+                canArchive
+                  ? `
+                    <button
+                      type="button"
+                      class="task-view-button reject"
+                      data-task-archive="${esc(task.id)}"
+                      aria-label="Archive task"
+                      title="Archive task"
+                    >&#128230;</button>
+                  `
+                  : ''
+              }
             </td>
           </tr>
         `;
@@ -1885,7 +1903,36 @@ document
 
 document
   .querySelector('#tasks')
-  .addEventListener('click', event => {
+  .addEventListener('click', async event => {
+    const archiveButton =
+      event.target.closest('[data-task-archive]');
+
+    if (archiveButton) {
+      event.stopPropagation();
+
+      const taskId =
+        archiveButton.dataset.taskArchive;
+
+      if (!window.confirm('Archive this task from the active dashboard view?')) {
+        return;
+      }
+
+      const response = await fetch(
+        `/api/tasks/${encodeURIComponent(taskId)}/archive`,
+        {
+          method: 'POST'
+        }
+      );
+
+      if (!response.ok) {
+        window.alert(`Task archive failed (${response.status}).`);
+        return;
+      }
+
+      await refresh();
+      return;
+    }
+
     const button =
       event.target.closest('[data-task-view]');
 
@@ -2554,11 +2601,3 @@ setInterval(refresh, 5000);
 
 </body>
 </html>
-
-
-
-
-
-
-
-

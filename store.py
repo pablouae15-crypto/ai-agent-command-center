@@ -68,7 +68,8 @@ class TaskStore:
                     completed_at TEXT,
                     error TEXT,
                     result_json TEXT,
-                    metadata_json TEXT NOT NULL DEFAULT '{}'
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    archived_at TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_tasks_status_priority ON tasks(status, priority, created_at);
                 CREATE TABLE IF NOT EXISTS approvals (
@@ -124,6 +125,19 @@ class TaskStore:
                 );
                 """
             )
+
+            task_columns = {
+                row["name"]
+                for row in db.execute(
+                    "PRAGMA table_info(tasks)"
+                ).fetchall()
+            }
+
+            if "archived_at" not in task_columns:
+                db.execute(
+                    "ALTER TABLE tasks "
+                    "ADD COLUMN archived_at TEXT"
+                )
 
             approval_columns = {
                 row["name"]
@@ -224,20 +238,75 @@ class TaskStore:
         with self._connect() as db:
             return self._row(db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone())
 
-    def list_tasks(self, limit: int = 100) -> list[dict[str, Any]]:
+    def list_tasks(self, limit: int = 100, include_archived: bool = False) -> list[dict[str, Any]]:
         with self._connect() as db:
+            where_clause = "" if include_archived else "WHERE archived_at IS NULL"
             rows = db.execute(
-                "SELECT * FROM tasks ORDER BY CASE priority WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Medium' THEN 3 ELSE 4 END, created_at DESC LIMIT ?",
+                f"SELECT * FROM tasks {where_clause} "
+                "ORDER BY CASE priority WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Medium' THEN 3 ELSE 4 END, created_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
             return [dict(row) for row in rows]
 
     def summary(self) -> dict[str, Any]:
         with self._connect() as db:
-            counts = {row["status"]: row["count"] for row in db.execute("SELECT status, COUNT(*) AS count FROM tasks GROUP BY status")}
-            priority_counts = {row["priority"]: row["count"] for row in db.execute("SELECT priority, COUNT(*) AS count FROM tasks GROUP BY priority")}
-            pending = db.execute("SELECT COUNT(*) AS count FROM approvals WHERE status='pending'").fetchone()["count"]
-            return {"task_counts": counts, "priority_counts": priority_counts, "approvals_waiting": pending}
+            counts = {
+                row["status"]: row["count"]
+                for row in db.execute(
+                    "SELECT status, COUNT(*) AS count FROM tasks "
+                    "WHERE archived_at IS NULL GROUP BY status"
+                )
+            }
+            priority_counts = {
+                row["priority"]: row["count"]
+                for row in db.execute(
+                    "SELECT priority, COUNT(*) AS count FROM tasks "
+                    "WHERE archived_at IS NULL GROUP BY priority"
+                )
+            }
+            archived_count = db.execute(
+                "SELECT COUNT(*) AS count FROM tasks WHERE archived_at IS NOT NULL"
+            ).fetchone()["count"]
+            pending = db.execute(
+                "SELECT COUNT(*) AS count FROM approvals WHERE status='pending'"
+            ).fetchone()["count"]
+            return {
+                "task_counts": counts,
+                "priority_counts": priority_counts,
+                "approvals_waiting": pending,
+                "archived_tasks": archived_count,
+            }
+
+    def archive_task(self, task_id: str) -> dict[str, Any] | None:
+        now = utc_now()
+        with self._lock, self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM tasks WHERE id=?",
+                (task_id,),
+            ).fetchone()
+
+            if not row:
+                return None
+
+            if row["status"] in {"queued", "running", "awaiting_approval"}:
+                raise PermissionError(
+                    "Only completed, failed, blocked, or partial tasks can be archived."
+                )
+
+            db.execute(
+                "UPDATE tasks SET archived_at=?, updated_at=? WHERE id=?",
+                (now, now, task_id),
+            )
+
+        self.add_activity(
+            "task.archived",
+            f"Task archived: {task_id}",
+            task_id=task_id,
+            payload={"archived_at": now},
+        )
+
+        return self.get_task(task_id)
+
 
     def claim_next_task(self) -> dict[str, Any] | None:
         with self._lock, self._connect() as db:

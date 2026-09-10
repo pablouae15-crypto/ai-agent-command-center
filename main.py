@@ -266,6 +266,19 @@ def create_task(request: TaskCreate) -> dict:
     return store.create_task(**payload)
 
 
+@app.post("/api/tasks/{task_id}/archive")
+def archive_task(task_id: str) -> dict:
+    try:
+        archived = store.archive_task(task_id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    if archived is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+
+    return archived
+
+
 
 @app.post("/api/gmail/drafts/request", status_code=201)
 def request_gmail_draft_approval(
