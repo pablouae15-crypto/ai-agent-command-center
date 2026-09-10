@@ -10,6 +10,66 @@ from config import Settings
 from store import TaskStore
 
 
+def _specialist_output_indicates_failure(output: str) -> bool:
+    normalized = output.lower().replace("’", "'")
+
+    failure_markers = (
+        "i can't perform",
+        "i cannot perform",
+        "can't perform",
+        "cannot perform",
+        "unable to perform",
+        "unable to execute",
+        "can't execute",
+        "cannot execute",
+        "required authorization is unavailable",
+        "approval_id was not provided",
+        "approval id was not provided",
+    )
+
+    no_action_markers = (
+        "no changes were made",
+        "no action was taken",
+        "nothing was changed",
+        "nothing was executed",
+        "did not execute",
+        "did not perform",
+        "verification did not run",
+        "no verification ran",
+        "no files were inspected or changed",
+        "was not run",
+    )
+
+    insufficient_evidence_markers = (
+        "no repository evidence",
+        "no evidence has been provided",
+        "evidence has not been provided",
+        "context has not been provided",
+        "required context is unavailable",
+        "i can't reliably",
+        "i cannot reliably",
+        "can't reliably summarize",
+        "cannot reliably summarize",
+        "need the authorized sandbox path",
+        "need the task id",
+    )
+
+    explicit_refusal = (
+        any(marker in normalized for marker in failure_markers)
+        and any(marker in normalized for marker in no_action_markers)
+    )
+
+    insufficient_evidence = (
+        any(marker in normalized for marker in insufficient_evidence_markers)
+        and (
+            "can't reliably" in normalized
+            or "cannot reliably" in normalized
+            or "need the " in normalized
+        )
+    )
+
+    return explicit_refusal or insufficient_evidence
+
 class Runtime:
     def __init__(self, store: TaskStore, settings: Settings):
         self.store = store
@@ -107,7 +167,22 @@ class Runtime:
                                 f"Unsupported specialist outcome status: {output.status}"
                             )
 
-                        self.store.complete_task(task["id"], {"output": output, "completed_at": datetime.now(timezone.utc).isoformat()})
+                        normalized_output = str(output)
+
+                        if _specialist_output_indicates_failure(
+                            normalized_output
+                        ):
+                            raise RuntimeError(normalized_output)
+
+                        self.store.complete_task(
+                            task["id"],
+                            {
+                                "output": output,
+                                "completed_at": datetime.now(
+                                    timezone.utc
+                                ).isoformat(),
+                            },
+                        )
                     except Exception as exc:  # noqa: BLE001 - the task must be audited as failed.
                         self.store.fail_task(task["id"], str(exc))
             await asyncio.sleep(self.settings.worker_poll_seconds)
