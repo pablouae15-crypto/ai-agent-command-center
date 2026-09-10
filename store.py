@@ -12,7 +12,7 @@ from write_approval import VerifiedApprovalRequest, approval_action_for_request
 
 
 PRIORITIES = ("Critical", "High", "Medium", "Low")
-STATUSES = ("queued", "running", "awaiting_approval", "completed", "failed")
+STATUSES = ("queued", "running", "awaiting_approval", "completed", "failed", "blocked", "partial")
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -256,6 +256,62 @@ class TaskStore:
                 db.execute("UPDATE agent_status SET status='idle', current_task_id=NULL, last_seen_at=? WHERE name=?", (now, task["agent_name"]))
         self.add_activity("task.failed", f"Task failed: {task['title'] if task else task_id}", task_id=task_id,
                           agent_name=task["agent_name"] if task else None, payload={"error": error[:500]})
+
+    def block_task(self, task_id: str, reason: str) -> None:
+        now = utc_now()
+        task = self.get_task(task_id)
+        with self._lock, self._connect() as db:
+            db.execute(
+                "UPDATE tasks SET status='blocked', error=?, updated_at=?, "
+                "result_json=NULL, completed_at=NULL WHERE id=?",
+                (reason[:2000], now, task_id),
+            )
+            if task:
+                db.execute(
+                    "UPDATE agent_status SET status='idle', "
+                    "current_task_id=NULL, last_seen_at=? WHERE name=?",
+                    (now, task["agent_name"]),
+                )
+        self.add_activity(
+            "task.blocked",
+            f"Task blocked: {task['title'] if task else task_id}",
+            task_id=task_id,
+            agent_name=task["agent_name"] if task else None,
+            payload={"reason": reason[:500]},
+        )
+
+    def partial_task(
+        self,
+        task_id: str,
+        result: Any,
+        summary: str,
+    ) -> None:
+        now = utc_now()
+        task = self.get_task(task_id)
+        with self._lock, self._connect() as db:
+            db.execute(
+                "UPDATE tasks SET status='partial', error=?, updated_at=?, "
+                "result_json=?, completed_at=NULL WHERE id=?",
+                (
+                    summary[:2000],
+                    now,
+                    json.dumps(result),
+                    task_id,
+                ),
+            )
+            if task:
+                db.execute(
+                    "UPDATE agent_status SET status='idle', "
+                    "current_task_id=NULL, last_seen_at=? WHERE name=?",
+                    (now, task["agent_name"]),
+                )
+        self.add_activity(
+            "task.partial",
+            f"Task partial: {task['title'] if task else task_id}",
+            task_id=task_id,
+            agent_name=task["agent_name"] if task else None,
+            payload={"summary": summary[:500]},
+        )
 
     def create_exact_approval(
         self,
