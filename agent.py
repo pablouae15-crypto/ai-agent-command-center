@@ -3,8 +3,9 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
+from pydantic import BaseModel, Field
 from agents import Agent, Runner, WebSearchTool, function_tool
 
 from config import settings
@@ -19,6 +20,26 @@ from write_approval import (
     VerifiedFileWriteRequest,
     validate_stored_approval,
 )
+
+
+class SpecialistOutcome(BaseModel):
+    status: Literal[
+        "completed",
+        "failed",
+        "blocked",
+        "partial",
+    ] = Field(
+        description=(
+            "Outcome semantics: completed means the assigned work was successfully carried out, "
+            "including an inspection or verification that disproved the condition being checked; "
+            "failed means execution or verification of the assigned work itself failed; "
+            "blocked means work could not proceed because of approval, authorization, or another "
+            "hard dependency; partial means some required work completed but the overall assigned "
+            "task remains incomplete."
+        )
+    )
+    summary: str
+    evidence: list[str]
 
 
 def api_key_configured() -> bool:
