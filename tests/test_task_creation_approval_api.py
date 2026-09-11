@@ -121,3 +121,14 @@ def test_approval_api_rejects_pending_task(monkeypatch, tmp_path: Path) -> None:
     assert task is not None
     assert task["status"] == "failed"
     assert task["error"] == "Rejected by human reviewer"
+
+
+def test_approval_api_returns_404_for_missing_approval(monkeypatch, tmp_path: Path) -> None:
+    test_store = make_store(tmp_path)
+    monkeypatch.setattr(main, "store", test_store)
+
+    with TestClient(main.app) as client:
+        response = client.post("/api/approvals/missing-approval/approved")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "approval not found"
