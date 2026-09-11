@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [tool.setuptools]
-py-modules = ["main", "agent", "config", "runtime", "store"]
+py-modules = ["main", "agent", "config", "runtime", "store", "execution_adapter", "google_connector", "personal_assistant"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
