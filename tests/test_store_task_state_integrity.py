@@ -78,3 +78,19 @@ def test_complete_task_clears_prior_error(
     assert current["error"] is None
     assert current["result_json"] is not None
     assert current["completed_at"] is not None
+
+
+def test_seed_defaults_records_initialization_activity_once(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.seed_defaults()
+    store.seed_defaults()
+
+    activity = store.list_activity(limit=10)
+    initialized = [
+        item
+        for item in activity
+        if item["event_type"] == "system"
+        and item["message"] == "Command Center initialized"
+    ]
+
+    assert len(initialized) == 1

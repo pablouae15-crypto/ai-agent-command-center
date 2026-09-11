@@ -183,7 +183,16 @@ class TaskStore:
                            description=excluded.description""",
                     (name, status, description, now),
                 )
-        self.add_activity("system", "Command Center initialized", payload={"seeded_agents": len(agents)})
+        with self._connect() as db:
+            existing_initialization = db.execute(
+                "SELECT 1 FROM activity "
+                "WHERE event_type=? AND message=? "
+                "LIMIT 1",
+                ("system", "Command Center initialized"),
+            ).fetchone()
+
+        if not existing_initialization:
+            self.add_activity("system", "Command Center initialized", payload={"seeded_agents": len(agents)})
 
     def _row(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
         return dict(row) if row else None
@@ -989,5 +998,4 @@ class TaskStore:
         next_run = (datetime.now(timezone.utc) + timedelta(seconds=interval_seconds)).isoformat()
         with self._lock, self._connect() as db:
             db.execute("UPDATE recurring_jobs SET next_run_at=? WHERE id=?", (next_run, job_id))
-
 
