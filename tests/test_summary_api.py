@@ -88,3 +88,33 @@ def test_summary_endpoint_includes_personal_assistant_handoff(monkeypatch, tmp_p
     assert task["priority"] == "High"
     assert task["agent_name"] == "Orchestrator"
     assert summary["task_counts"]["queued"] == 1
+
+
+def test_summary_endpoint_surfaces_attention_tasks_outside_priority_limit(monkeypatch, tmp_path: Path) -> None:
+    test_store = make_store(tmp_path)
+    monkeypatch.setattr(main, "store", test_store)
+
+    for index in range(25):
+        task = test_store.create_task(
+            title=f"Medium completed task {index}",
+            description="Completed medium task fills the visible priority window.",
+            agent_name="Orchestrator",
+            priority="Medium",
+        )
+        test_store.complete_task(str(task["id"]), {"ok": True})
+
+    failed = test_store.create_task(
+        title="Low failed task needing attention",
+        description="Failed low priority task must remain visible in summary tasks.",
+        agent_name="Orchestrator",
+        priority="Low",
+    )
+    test_store.fail_task(str(failed["id"]), "Visible failure")
+
+    with TestClient(main.app) as client:
+        response = client.get("/api/summary")
+
+    assert response.status_code == 200
+    summary = response.json()
+    assert summary["task_counts"]["failed"] == 1
+    assert any(task["id"] == failed["id"] for task in summary["tasks"])

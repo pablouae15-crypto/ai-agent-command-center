@@ -851,7 +851,15 @@ class TaskStore:
             return [dict(row) for row in db.execute("SELECT * FROM activity ORDER BY id DESC LIMIT ?", (limit,))]
 
     def list_task_visibility(self, limit: int = 25) -> list[dict[str, Any]]:
+        attention_statuses = {"failed", "running", "queued", "awaiting_approval"}
         tasks = self.list_tasks(limit)
+        missing_attention = [
+            task
+            for task in self.list_tasks(500)
+            if task["status"] in attention_statuses
+            and all(existing["id"] != task["id"] for existing in tasks)
+        ]
+        tasks = (missing_attention + tasks)[:limit]
 
         with self._connect() as db:
             for task in tasks:
@@ -998,4 +1006,3 @@ class TaskStore:
         next_run = (datetime.now(timezone.utc) + timedelta(seconds=interval_seconds)).isoformat()
         with self._lock, self._connect() as db:
             db.execute("UPDATE recurring_jobs SET next_run_at=? WHERE id=?", (next_run, job_id))
-
