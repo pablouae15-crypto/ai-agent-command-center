@@ -32,7 +32,7 @@ Set-Location "D:\AI-Agent-Command-Center"
 & ".\.venv\Scripts\python.exe" -m pytest -q
 ```
 
-Current verified baseline: `169 passed`.
+Current verified baseline: `172 passed`.
 
 The suite covers API behavior, approvals, structured task outcomes, specialist routing, controlled execution, connector behavior, dashboard behavior, and regression protection.
 
