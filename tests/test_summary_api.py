@@ -60,3 +60,31 @@ def test_summary_endpoint_reports_operational_counts(monkeypatch, tmp_path: Path
     assert any(task["id"] == approval_task["id"] for task in summary["tasks"])
     assert len(summary["approvals"]) == 1
     assert summary["execution_note"].startswith("Agent execution is opt-in")
+
+
+def test_summary_endpoint_includes_personal_assistant_handoff(monkeypatch, tmp_path: Path) -> None:
+    test_store = make_store(tmp_path)
+    monkeypatch.setattr(main, "store", test_store)
+
+    with TestClient(main.app) as client:
+        handoff_response = client.post(
+            "/api/assistant/handoff",
+            json={
+                "request": "Summarize current status for dashboard verification.",
+                "priority": "High",
+            },
+        )
+        summary_response = client.get("/api/summary")
+
+    assert handoff_response.status_code == 201
+    handoff = handoff_response.json()
+    assert handoff["status"] == "queued"
+    assert handoff["agent_name"] == "Orchestrator"
+    assert handoff["requires_approval"] is False
+
+    summary = summary_response.json()
+    task = next(item for item in summary["tasks"] if item["id"] == handoff["task_id"])
+    assert task["source"] == "personal-assistant"
+    assert task["priority"] == "High"
+    assert task["agent_name"] == "Orchestrator"
+    assert summary["task_counts"]["queued"] == 1
