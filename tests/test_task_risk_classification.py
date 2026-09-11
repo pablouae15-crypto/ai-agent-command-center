@@ -66,3 +66,33 @@ def test_read_only_file_inspection_is_none_and_does_not_require_approval(monkeyp
     assert response.status_code == 201
     assert captured["side_effect_level"] == "none"
     assert captured["requires_approval"] is False
+
+
+def test_destructive_task_creation_requires_approval(monkeypatch):
+    captured = {}
+
+    def fake_create_task(**kwargs):
+        captured.update(kwargs)
+        return {
+            "id": "test-task",
+            "title": kwargs["title"],
+            "status": "awaiting_approval",
+            "side_effect_level": kwargs["side_effect_level"],
+            "requires_approval": kwargs["requires_approval"],
+        }
+
+    monkeypatch.setattr(main.store, "create_task", fake_create_task)
+
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/api/tasks",
+            json={
+                "title": "Delete sandbox file",
+                "description": r"Delete D:\Shared-Local-Execution-Engine-Sandbox\obsolete.txt after approval.",
+                "priority": "Critical",
+            },
+        )
+
+    assert response.status_code == 201
+    assert captured["side_effect_level"] == "destructive"
+    assert captured["requires_approval"] is True
