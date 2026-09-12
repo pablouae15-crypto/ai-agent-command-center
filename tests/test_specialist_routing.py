@@ -894,3 +894,301 @@ def test_run_orchestrator_direct_specialist_route_bypasses_planner(
     assert outcome.status == "completed"
     assert calls == [("Developer", task["description"])]
     assert outcome.evidence == ["direct specialist verification passed"]
+
+
+def test_run_orchestrator_persists_managed_workflow_stage_tasks(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = make_store(tmp_path)
+    store.seed_defaults()
+    task = store.create_task(
+        title="Persisted orchestration",
+        description="Implement and verify the requested change.",
+        agent_name="Orchestrator",
+        priority="High",
+        side_effect_level="none",
+        requires_approval=False,
+    )
+
+    async def fake_classify_task_route(*args, **kwargs):
+        return agent.RoutingDecision(
+            specialist="Orchestrator",
+            reason="Task spans multiple specialist domains.",
+        )
+
+    async def fake_plan_orchestration(*args, **kwargs):
+        return agent.OrchestrationPlan(
+            reason="Implementation then verification.",
+            stages=[
+                agent.OrchestrationStage(
+                    specialist="Developer",
+                    instruction="Implement the requested change.",
+                ),
+                agent.OrchestrationStage(
+                    specialist="QA",
+                    instruction="Verify the implementation.",
+                ),
+            ],
+        )
+
+    class FakeSpecialist:
+        def __init__(self, name: str):
+            self.name = name
+
+    def fake_build_specialist(
+        specialist_name: str,
+        model: str,
+        store_arg: TaskStore,
+        task_id: str,
+    ):
+        return FakeSpecialist(specialist_name)
+
+    async def fake_runner_run(specialist, prompt, **kwargs):
+        return SimpleNamespace(
+            final_output=agent.SpecialistOutcome(
+                status="completed",
+                summary=f"{specialist.name} completed.",
+                evidence=[f"{specialist.name} evidence"],
+            )
+        )
+
+    monkeypatch.setattr(agent, "api_key_configured", lambda: True)
+    monkeypatch.setattr(agent, "execution_engine", SimpleNamespace(ready=True))
+    monkeypatch.setattr(agent, "classify_task_route", fake_classify_task_route)
+    monkeypatch.setattr(agent, "plan_orchestration", fake_plan_orchestration)
+    monkeypatch.setattr(agent, "build_specialist", fake_build_specialist)
+    monkeypatch.setattr(agent.Runner, "run", fake_runner_run)
+
+    outcome = asyncio.run(
+        agent.run_orchestrator(
+            task,
+            "gpt-5.6",
+            store,
+        )
+    )
+
+    children = [
+        row
+        for row in store.list_tasks(include_archived=True)
+        if row["parent_task_id"] == task["id"]
+    ]
+    children.sort(key=lambda row: row["stage_index"])
+
+    assert outcome.status == "completed"
+    assert len(children) == 2
+    assert [row["agent_name"] for row in children] == ["Developer", "QA"]
+    assert [row["stage_index"] for row in children] == [1, 2]
+    assert all(row["workflow_id"] == task["id"] for row in children)
+    assert all(row["workflow_managed"] == 1 for row in children)
+    assert [row["status"] for row in children] == ["completed", "completed"]
+    assert all(row["result_json"] is not None for row in children)
+
+
+def test_run_orchestrator_leaves_later_persisted_stage_queued_when_blocked(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = make_store(tmp_path)
+    store.seed_defaults()
+    task = store.create_task(
+        title="Persisted blocked orchestration",
+        description="Implement and verify the requested change.",
+        agent_name="Orchestrator",
+        priority="Medium",
+        side_effect_level="none",
+        requires_approval=False,
+    )
+
+    async def fake_classify_task_route(*args, **kwargs):
+        return agent.RoutingDecision(
+            specialist="Orchestrator",
+            reason="Task spans multiple specialist domains.",
+        )
+
+    async def fake_plan_orchestration(*args, **kwargs):
+        return agent.OrchestrationPlan(
+            reason="Implementation then verification.",
+            stages=[
+                agent.OrchestrationStage(
+                    specialist="Developer",
+                    instruction="Implement the requested change.",
+                ),
+                agent.OrchestrationStage(
+                    specialist="QA",
+                    instruction="Verify the implementation.",
+                ),
+            ],
+        )
+
+    class FakeSpecialist:
+        def __init__(self, name: str):
+            self.name = name
+
+    def fake_build_specialist(
+        specialist_name: str,
+        model: str,
+        store_arg: TaskStore,
+        task_id: str,
+    ):
+        return FakeSpecialist(specialist_name)
+
+    async def fake_runner_run(specialist, prompt, **kwargs):
+        return SimpleNamespace(
+            final_output=agent.SpecialistOutcome(
+                status="blocked",
+                summary="Approval is required.",
+                evidence=["exact approval missing"],
+            )
+        )
+
+    monkeypatch.setattr(agent, "api_key_configured", lambda: True)
+    monkeypatch.setattr(agent, "execution_engine", SimpleNamespace(ready=True))
+    monkeypatch.setattr(agent, "classify_task_route", fake_classify_task_route)
+    monkeypatch.setattr(agent, "plan_orchestration", fake_plan_orchestration)
+    monkeypatch.setattr(agent, "build_specialist", fake_build_specialist)
+    monkeypatch.setattr(agent.Runner, "run", fake_runner_run)
+
+    outcome = asyncio.run(
+        agent.run_orchestrator(
+            task,
+            "gpt-5.6",
+            store,
+        )
+    )
+
+    children = [
+        row
+        for row in store.list_tasks(include_archived=True)
+        if row["parent_task_id"] == task["id"]
+    ]
+    children.sort(key=lambda row: row["stage_index"])
+
+    assert outcome.status == "blocked"
+    assert len(children) == 2
+    assert children[0]["status"] == "blocked"
+    assert children[1]["status"] == "queued"
+    assert children[1]["workflow_managed"] == 1
+
+
+def test_run_orchestrator_marks_persisted_stage_failed_on_runner_exception(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = make_store(tmp_path)
+    store.seed_defaults()
+    task = store.create_task(
+        title="Failing persisted orchestration",
+        description="Run a stage that raises unexpectedly.",
+        agent_name="Orchestrator",
+        side_effect_level="none",
+        requires_approval=False,
+    )
+
+    async def fake_classify_task_route(*args, **kwargs):
+        return agent.RoutingDecision(
+            specialist="Orchestrator",
+            reason="Requires orchestration.",
+        )
+
+    async def fake_plan_orchestration(*args, **kwargs):
+        return agent.OrchestrationPlan(
+            reason="Single failing stage.",
+            stages=[
+                agent.OrchestrationStage(
+                    specialist="Developer",
+                    instruction="Run the failing stage.",
+                )
+            ],
+        )
+
+    def fake_build_specialist(*args, **kwargs):
+        return SimpleNamespace(name="Developer")
+
+    async def fake_runner_run(*args, **kwargs):
+        raise RuntimeError("specialist execution failed")
+
+    monkeypatch.setattr(agent, "api_key_configured", lambda: True)
+    monkeypatch.setattr(agent, "execution_engine", SimpleNamespace(ready=True))
+    monkeypatch.setattr(agent, "classify_task_route", fake_classify_task_route)
+    monkeypatch.setattr(agent, "plan_orchestration", fake_plan_orchestration)
+    monkeypatch.setattr(agent, "build_specialist", fake_build_specialist)
+    monkeypatch.setattr(agent.Runner, "run", fake_runner_run)
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="specialist execution failed"):
+        asyncio.run(agent.run_orchestrator(task, "gpt-5.6", store))
+
+    children = [
+        row
+        for row in store.list_tasks(include_archived=True)
+        if row["parent_task_id"] == task["id"]
+    ]
+
+    assert len(children) == 1
+    assert children[0]["status"] == "failed"
+    assert children[0]["error"] is not None
+
+
+def test_run_orchestrator_marks_persisted_stage_failed_on_invalid_output(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = make_store(tmp_path)
+    store.seed_defaults()
+    task = store.create_task(
+        title="Invalid output orchestration",
+        description="Run a stage returning an invalid result.",
+        agent_name="Orchestrator",
+        side_effect_level="none",
+        requires_approval=False,
+    )
+
+    async def fake_classify_task_route(*args, **kwargs):
+        return agent.RoutingDecision(
+            specialist="Orchestrator",
+            reason="Requires orchestration.",
+        )
+
+    async def fake_plan_orchestration(*args, **kwargs):
+        return agent.OrchestrationPlan(
+            reason="Single invalid stage.",
+            stages=[
+                agent.OrchestrationStage(
+                    specialist="Developer",
+                    instruction="Return an invalid result.",
+                )
+            ],
+        )
+
+    def fake_build_specialist(*args, **kwargs):
+        return SimpleNamespace(name="Developer")
+
+    async def fake_runner_run(*args, **kwargs):
+        return SimpleNamespace(final_output="invalid")
+
+    monkeypatch.setattr(agent, "api_key_configured", lambda: True)
+    monkeypatch.setattr(agent, "execution_engine", SimpleNamespace(ready=True))
+    monkeypatch.setattr(agent, "classify_task_route", fake_classify_task_route)
+    monkeypatch.setattr(agent, "plan_orchestration", fake_plan_orchestration)
+    monkeypatch.setattr(agent, "build_specialist", fake_build_specialist)
+    monkeypatch.setattr(agent.Runner, "run", fake_runner_run)
+
+    import pytest
+
+    with pytest.raises(
+        RuntimeError,
+        match="Specialist returned an invalid structured outcome",
+    ):
+        asyncio.run(agent.run_orchestrator(task, "gpt-5.6", store))
+
+    children = [
+        row
+        for row in store.list_tasks(include_archived=True)
+        if row["parent_task_id"] == task["id"]
+    ]
+
+    assert len(children) == 1
+    assert children[0]["status"] == "failed"
+    assert children[0]["error"] is not None

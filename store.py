@@ -69,7 +69,11 @@ class TaskStore:
                     error TEXT,
                     result_json TEXT,
                     metadata_json TEXT NOT NULL DEFAULT '{}',
-                    archived_at TEXT
+                    archived_at TEXT,
+                    parent_task_id TEXT,
+                    workflow_id TEXT,
+                    stage_index INTEGER,
+                    workflow_managed INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE INDEX IF NOT EXISTS idx_tasks_status_priority ON tasks(status, priority, created_at);
                 CREATE TABLE IF NOT EXISTS approvals (
@@ -137,6 +141,30 @@ class TaskStore:
                 db.execute(
                     "ALTER TABLE tasks "
                     "ADD COLUMN archived_at TEXT"
+                )
+
+            if "parent_task_id" not in task_columns:
+                db.execute(
+                    "ALTER TABLE tasks "
+                    "ADD COLUMN parent_task_id TEXT"
+                )
+
+            if "workflow_id" not in task_columns:
+                db.execute(
+                    "ALTER TABLE tasks "
+                    "ADD COLUMN workflow_id TEXT"
+                )
+
+            if "stage_index" not in task_columns:
+                db.execute(
+                    "ALTER TABLE tasks "
+                    "ADD COLUMN stage_index INTEGER"
+                )
+
+            if "workflow_managed" not in task_columns:
+                db.execute(
+                    "ALTER TABLE tasks "
+                    "ADD COLUMN workflow_managed INTEGER NOT NULL DEFAULT 0"
                 )
 
             approval_columns = {
@@ -209,6 +237,10 @@ class TaskStore:
         due_at: str | None = None,
         metadata: dict[str, Any] | None = None,
         defer_exact_approval: bool = False,
+        parent_task_id: str | None = None,
+        workflow_id: str | None = None,
+        stage_index: int | None = None,
+        workflow_managed: bool = False,
     ) -> dict[str, Any]:
         if priority not in PRIORITIES:
             raise ValueError(f"priority must be one of {PRIORITIES}")
@@ -229,12 +261,15 @@ class TaskStore:
             db.execute(
                 """INSERT INTO tasks
                    (id,title,description,agent_name,priority,status,side_effect_level,
-                    requires_approval,source,created_at,updated_at,due_at,metadata_json)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    requires_approval,source,created_at,updated_at,due_at,metadata_json,
+                    parent_task_id,workflow_id,stage_index,workflow_managed)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     task_id, title, description, agent_name, priority,
                     initial_status, side_effect_level, int(requires_approval), source,
                     now, now, due_at, json.dumps(metadata_payload),
+                    parent_task_id, workflow_id, stage_index,
+                    int(workflow_managed),
                 ),
             )
         self.add_activity("task.created", f"Task created: {title}", task_id=task_id, agent_name=agent_name,
@@ -322,6 +357,7 @@ class TaskStore:
             row = db.execute(
                 """SELECT * FROM tasks
                    WHERE status='queued'
+                     AND workflow_managed=0
                      AND (
                          requires_approval=0
                          OR (
@@ -347,6 +383,121 @@ class TaskStore:
         task = self.get_task(row["id"])
         self.add_activity("task.started", f"Task started: {task['title']}", task_id=task["id"], agent_name=task["agent_name"])
         return task
+
+    def start_workflow_stage(self, task_id: str) -> dict[str, Any]:
+        now = utc_now()
+
+        with self._lock, self._connect() as db:
+            task = db.execute(
+                "SELECT * FROM tasks WHERE id=?",
+                (task_id,),
+            ).fetchone()
+
+            if not task:
+                raise ValueError("task not found")
+
+            if not task["workflow_managed"]:
+                raise PermissionError(
+                    "Workflow stage transitions require a workflow-managed task."
+                )
+
+            if task["status"] != "queued":
+                raise ValueError(
+                    "Workflow stage must be queued before it can start."
+                )
+
+            db.execute(
+                "UPDATE tasks SET status='running', started_at=?, "
+                "updated_at=?, completed_at=NULL, error=NULL WHERE id=?",
+                (now, now, task_id),
+            )
+
+        self.add_activity(
+            "workflow.stage_started",
+            f"Workflow stage started: {task['title']}",
+            task_id=task_id,
+            agent_name=task["agent_name"],
+            payload={
+                "workflow_id": task["workflow_id"],
+                "parent_task_id": task["parent_task_id"],
+                "stage_index": task["stage_index"],
+            },
+        )
+
+        updated = self.get_task(task_id)
+        if updated is None:
+            raise RuntimeError("Workflow stage disappeared after start.")
+        return updated
+
+    def finish_workflow_stage(
+        self,
+        task_id: str,
+        status: str,
+        result: Any,
+    ) -> dict[str, Any]:
+        if status not in {"completed", "failed", "blocked", "partial"}:
+            raise ValueError(
+                "Workflow stage status must be completed, failed, blocked, or partial."
+            )
+
+        now = utc_now()
+
+        with self._lock, self._connect() as db:
+            task = db.execute(
+                "SELECT * FROM tasks WHERE id=?",
+                (task_id,),
+            ).fetchone()
+
+            if not task:
+                raise ValueError("task not found")
+
+            if not task["workflow_managed"]:
+                raise PermissionError(
+                    "Workflow stage transitions require a workflow-managed task."
+                )
+
+            if task["status"] != "running":
+                raise ValueError(
+                    "Workflow stage must be running before it can finish."
+                )
+
+            summary = ""
+            if isinstance(result, dict):
+                summary = str(result.get("summary") or "")
+
+            completed_at = now if status == "completed" else None
+            error = summary[:2000] if status in {"failed", "blocked", "partial"} else None
+
+            db.execute(
+                "UPDATE tasks SET status=?, completed_at=?, updated_at=?, "
+                "result_json=?, error=? WHERE id=?",
+                (
+                    status,
+                    completed_at,
+                    now,
+                    json.dumps(result),
+                    error,
+                    task_id,
+                ),
+            )
+
+        self.add_activity(
+            "workflow.stage_finished",
+            f"Workflow stage finished with status {status}: {task['title']}",
+            task_id=task_id,
+            agent_name=task["agent_name"],
+            payload={
+                "workflow_id": task["workflow_id"],
+                "parent_task_id": task["parent_task_id"],
+                "stage_index": task["stage_index"],
+                "status": status,
+            },
+        )
+
+        updated = self.get_task(task_id)
+        if updated is None:
+            raise RuntimeError("Workflow stage disappeared after finish.")
+        return updated
 
     def complete_task(self, task_id: str, result: Any) -> None:
         now = utc_now()

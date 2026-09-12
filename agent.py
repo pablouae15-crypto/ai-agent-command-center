@@ -1086,6 +1086,22 @@ async def run_orchestrator(
             },
         )
 
+        workflow_stage_tasks = [
+            store.create_task(
+                title=f"Stage {stage_number}: {stage.specialist}",
+                description=stage.instruction,
+                agent_name=stage.specialist,
+                priority=str(task["priority"]),
+                side_effect_level="none",
+                requires_approval=False,
+                parent_task_id=str(task["id"]),
+                workflow_id=str(task["id"]),
+                stage_index=stage_number,
+                workflow_managed=True,
+            )
+            for stage_number, stage in enumerate(plan.stages, start=1)
+        ]
+
         stage_outcomes: list[SpecialistOutcome] = []
         prior_context: list[str] = []
 
@@ -1094,6 +1110,9 @@ async def run_orchestrator(
                 raise PermissionError(
                     f"Unauthorized orchestration stage: {stage.specialist}"
                 )
+
+            workflow_stage_task = workflow_stage_tasks[stage_number - 1]
+            store.start_workflow_stage(str(workflow_stage_task["id"]))
 
             stage_prompt_parts = [
                 f"Original task:\n{task['description']}",
@@ -1123,23 +1142,43 @@ async def run_orchestrator(
                 },
             )
 
-            result = await Runner.run(
-                build_specialist(
-                    stage.specialist,
-                    model,
-                    store,
-                    str(task["id"]),
-                ),
-                stage_prompt,
-                max_turns=10,
-            )
-
-            output = getattr(result, "final_output", None)
-
-            if not isinstance(output, SpecialistOutcome):
-                raise RuntimeError(
-                    "Specialist returned an invalid structured outcome."
+            try:
+                result = await Runner.run(
+                    build_specialist(
+                        stage.specialist,
+                        model,
+                        store,
+                        str(task["id"]),
+                    ),
+                    stage_prompt,
+                    max_turns=10,
                 )
+
+                output = getattr(result, "final_output", None)
+
+                if not isinstance(output, SpecialistOutcome):
+                    raise RuntimeError(
+                        "Specialist returned an invalid structured outcome."
+                    )
+            except Exception as exc:
+                store.finish_workflow_stage(
+                    str(workflow_stage_task["id"]),
+                    status="failed",
+                    result={
+                        "summary": str(exc),
+                        "evidence": [],
+                    },
+                )
+                raise
+
+            store.finish_workflow_stage(
+                str(workflow_stage_task["id"]),
+                status=output.status,
+                result={
+                    "summary": output.summary,
+                    "evidence": output.evidence,
+                },
+            )
 
             stage_outcomes.append(output)
             prior_context.append(
