@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -552,3 +554,343 @@ def test_job_tracker_is_seeded_idle(
 
     assert job_tracker["status"] == "idle"
     assert "job" in job_tracker["description"].lower()
+
+def test_orchestration_plan_accepts_bounded_authorized_stages() -> None:
+    plan = agent.OrchestrationPlan(
+        reason="Implementation requires development, verification, and review.",
+        stages=[
+            agent.OrchestrationStage(
+                specialist="Developer",
+                instruction="Implement the requested change.",
+            ),
+            agent.OrchestrationStage(
+                specialist="QA",
+                instruction="Run focused regression verification.",
+            ),
+            agent.OrchestrationStage(
+                specialist="CodeReviewer",
+                instruction="Review the completed change and evidence.",
+            ),
+        ],
+    )
+
+    assert plan.reason.startswith("Implementation requires")
+    assert [stage.specialist for stage in plan.stages] == [
+        "Developer",
+        "QA",
+        "CodeReviewer",
+    ]
+
+
+def test_orchestration_plan_rejects_invalid_or_unbounded_stages() -> None:
+    with pytest.raises(ValueError):
+        agent.OrchestrationPlan(
+            reason="Invalid destination.",
+            stages=[
+                agent.OrchestrationStage(
+                    specialist="Orchestrator",
+                    instruction="Delegate again.",
+                ),
+            ],
+        )
+
+    with pytest.raises(ValueError):
+        agent.OrchestrationPlan(
+            reason="Too many stages.",
+            stages=[
+                agent.OrchestrationStage(
+                    specialist="Developer",
+                    instruction=f"Stage {index}.",
+                )
+                for index in range(5)
+            ],
+        )
+
+def test_orchestration_planner_is_tool_free_and_structured() -> None:
+    planner = agent.build_orchestration_planner("gpt-5.6")
+
+    assert planner.name == "Command Center Orchestration Planner"
+    assert planner.tools == []
+    assert planner.output_type is agent.OrchestrationPlan
+
+
+def test_plan_orchestration_returns_structured_plan(monkeypatch) -> None:
+    expected = agent.OrchestrationPlan(
+        reason="Use development followed by verification.",
+        stages=[
+            agent.OrchestrationStage(
+                specialist="Developer",
+                instruction="Implement the requested change.",
+            ),
+            agent.OrchestrationStage(
+                specialist="QA",
+                instruction="Verify the completed change.",
+            ),
+        ],
+    )
+
+    async def fake_runner_run(*args, **kwargs):
+        return SimpleNamespace(final_output=expected)
+
+    monkeypatch.setattr(agent.Runner, "run", fake_runner_run)
+
+    actual = asyncio.run(
+        agent.plan_orchestration(
+            "Implement and verify the requested change.",
+            "gpt-5.6",
+        )
+    )
+
+    assert actual == expected
+
+
+def test_plan_orchestration_rejects_invalid_structured_result(monkeypatch) -> None:
+    async def fake_runner_run(*args, **kwargs):
+        return SimpleNamespace(final_output="not a plan")
+
+    monkeypatch.setattr(agent.Runner, "run", fake_runner_run)
+
+    with pytest.raises(RuntimeError, match="invalid structured result"):
+        asyncio.run(
+            agent.plan_orchestration(
+                "Plan this multi-stage task.",
+                "gpt-5.6",
+            )
+        )
+
+def test_run_orchestrator_executes_planned_stages_in_order(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = make_store(tmp_path)
+    store.seed_defaults()
+    task = store.create_task(
+        title="Multi-stage orchestration",
+        description="Implement, verify, and review the requested change.",
+        agent_name="Orchestrator",
+        priority="Medium",
+        side_effect_level="none",
+        requires_approval=False,
+    )
+
+    async def fake_classify_task_route(*args, **kwargs):
+        return agent.RoutingDecision(
+            specialist="Orchestrator",
+            reason="Task spans multiple specialist domains.",
+        )
+
+    async def fake_plan_orchestration(*args, **kwargs):
+        return agent.OrchestrationPlan(
+            reason="Implementation then verification.",
+            stages=[
+                agent.OrchestrationStage(
+                    specialist="Developer",
+                    instruction="Implement the requested change.",
+                ),
+                agent.OrchestrationStage(
+                    specialist="QA",
+                    instruction="Verify the implementation.",
+                ),
+            ],
+        )
+
+    calls: list[tuple[str, str]] = []
+
+    class FakeSpecialist:
+        def __init__(self, name: str):
+            self.name = name
+
+    def fake_build_specialist(
+        specialist_name: str,
+        model: str,
+        store_arg: TaskStore,
+        task_id: str,
+    ):
+        return FakeSpecialist(specialist_name)
+
+    async def fake_runner_run(specialist, prompt, **kwargs):
+        calls.append((specialist.name, prompt))
+
+        if specialist.name == "Developer":
+            return SimpleNamespace(
+                final_output=agent.SpecialistOutcome(
+                    status="completed",
+                    summary="Implementation completed.",
+                    evidence=["developer verification passed"],
+                )
+            )
+
+        return SimpleNamespace(
+            final_output=agent.SpecialistOutcome(
+                status="completed",
+                summary="QA completed.",
+                evidence=["qa regression passed"],
+            )
+        )
+
+    monkeypatch.setattr(agent, "api_key_configured", lambda: True)
+    monkeypatch.setattr(agent, "execution_engine", SimpleNamespace(ready=True))
+    monkeypatch.setattr(agent, "classify_task_route", fake_classify_task_route)
+    monkeypatch.setattr(agent, "plan_orchestration", fake_plan_orchestration)
+    monkeypatch.setattr(agent, "build_specialist", fake_build_specialist)
+    monkeypatch.setattr(agent.Runner, "run", fake_runner_run)
+
+    outcome = asyncio.run(
+        agent.run_orchestrator(
+            task,
+            "gpt-5.6",
+            store,
+        )
+    )
+
+    assert outcome.status == "completed"
+    assert [name for name, _ in calls] == ["Developer", "QA"]
+    assert "developer verification passed" in calls[1][1]
+    assert "qa regression passed" in outcome.evidence
+
+
+def test_run_orchestrator_stops_after_blocked_stage(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = make_store(tmp_path)
+    store.seed_defaults()
+    task = store.create_task(
+        title="Blocked orchestration",
+        description="Implement and verify the requested change.",
+        agent_name="Orchestrator",
+        priority="Medium",
+        side_effect_level="none",
+        requires_approval=False,
+    )
+
+    async def fake_classify_task_route(*args, **kwargs):
+        return agent.RoutingDecision(
+            specialist="Orchestrator",
+            reason="Task spans multiple specialist domains.",
+        )
+
+    async def fake_plan_orchestration(*args, **kwargs):
+        return agent.OrchestrationPlan(
+            reason="Implementation then verification.",
+            stages=[
+                agent.OrchestrationStage(
+                    specialist="Developer",
+                    instruction="Implement the requested change.",
+                ),
+                agent.OrchestrationStage(
+                    specialist="QA",
+                    instruction="Verify the implementation.",
+                ),
+            ],
+        )
+
+    calls: list[str] = []
+
+    class FakeSpecialist:
+        def __init__(self, name: str):
+            self.name = name
+
+    def fake_build_specialist(
+        specialist_name: str,
+        model: str,
+        store_arg: TaskStore,
+        task_id: str,
+    ):
+        return FakeSpecialist(specialist_name)
+
+    async def fake_runner_run(specialist, prompt, **kwargs):
+        calls.append(specialist.name)
+        return SimpleNamespace(
+            final_output=agent.SpecialistOutcome(
+                status="blocked",
+                summary="Approval is required.",
+                evidence=["exact approval missing"],
+            )
+        )
+
+    monkeypatch.setattr(agent, "api_key_configured", lambda: True)
+    monkeypatch.setattr(agent, "execution_engine", SimpleNamespace(ready=True))
+    monkeypatch.setattr(agent, "classify_task_route", fake_classify_task_route)
+    monkeypatch.setattr(agent, "plan_orchestration", fake_plan_orchestration)
+    monkeypatch.setattr(agent, "build_specialist", fake_build_specialist)
+    monkeypatch.setattr(agent.Runner, "run", fake_runner_run)
+
+    outcome = asyncio.run(
+        agent.run_orchestrator(
+            task,
+            "gpt-5.6",
+            store,
+        )
+    )
+
+    assert outcome.status == "blocked"
+    assert calls == ["Developer"]
+    assert outcome.evidence == ["exact approval missing"]
+
+def test_run_orchestrator_direct_specialist_route_bypasses_planner(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = make_store(tmp_path)
+    store.seed_defaults()
+    task = store.create_task(
+        title="Direct specialist routing",
+        description="Implement this focused code change.",
+        agent_name="Orchestrator",
+        priority="Medium",
+        side_effect_level="none",
+        requires_approval=False,
+    )
+
+    async def fake_classify_task_route(*args, **kwargs):
+        return agent.RoutingDecision(
+            specialist="Developer",
+            reason="This is a single-domain implementation task.",
+        )
+
+    async def unexpected_plan_orchestration(*args, **kwargs):
+        raise AssertionError("Direct specialist routes must not invoke the planner.")
+
+    calls: list[tuple[str, str]] = []
+
+    class FakeSpecialist:
+        def __init__(self, name: str):
+            self.name = name
+
+    def fake_build_specialist(
+        specialist_name: str,
+        model: str,
+        store_arg: TaskStore,
+        task_id: str,
+    ):
+        return FakeSpecialist(specialist_name)
+
+    async def fake_runner_run(specialist, prompt, **kwargs):
+        calls.append((specialist.name, prompt))
+        return SimpleNamespace(
+            final_output=agent.SpecialistOutcome(
+                status="completed",
+                summary="Focused implementation completed.",
+                evidence=["direct specialist verification passed"],
+            )
+        )
+
+    monkeypatch.setattr(agent, "api_key_configured", lambda: True)
+    monkeypatch.setattr(agent, "execution_engine", SimpleNamespace(ready=True))
+    monkeypatch.setattr(agent, "classify_task_route", fake_classify_task_route)
+    monkeypatch.setattr(agent, "plan_orchestration", unexpected_plan_orchestration)
+    monkeypatch.setattr(agent, "build_specialist", fake_build_specialist)
+    monkeypatch.setattr(agent.Runner, "run", fake_runner_run)
+
+    outcome = asyncio.run(
+        agent.run_orchestrator(
+            task,
+            "gpt-5.6",
+            store,
+        )
+    )
+
+    assert outcome.status == "completed"
+    assert calls == [("Developer", task["description"])]
+    assert outcome.evidence == ["direct specialist verification passed"]

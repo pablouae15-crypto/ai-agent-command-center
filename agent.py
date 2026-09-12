@@ -63,6 +63,26 @@ class RoutingDecision(BaseModel):
     reason: str
 
 
+class OrchestrationStage(BaseModel):
+    specialist: Literal[
+        "Developer",
+        "QA",
+        "UIUX",
+        "CodeReviewer",
+        "SecurityReviewer",
+        "Documentation",
+        "Executive Assistant",
+        "Research / News",
+        "HR & Compliance",
+        "Job Tracker",
+    ]
+    instruction: str = Field(min_length=1)
+
+
+class OrchestrationPlan(BaseModel):
+    reason: str = Field(min_length=1)
+    stages: list[OrchestrationStage] = Field(min_length=1, max_length=4)
+
 ROUTABLE_SPECIALISTS = frozenset(
     {
         "Developer",
@@ -762,6 +782,43 @@ async def classify_task_route(
     return decision
 
 
+def build_orchestration_planner(model: str) -> Agent:
+    return Agent(
+        name="Command Center Orchestration Planner",
+        model=model,
+        instructions=(
+            "Create a short bounded execution plan for a task that spans multiple specialist domains. "
+            "Use between one and four stages. "
+            "Each stage must select exactly one authorized specialist and give that specialist one focused instruction. "
+            "Do not select Orchestrator as a stage. "
+            "Prefer the fewest stages needed to complete and verify the task. "
+            "Do not invent approvals, permissions, external actions, credentials, or capabilities. "
+            "Return only the structured orchestration plan."
+        ),
+        output_type=OrchestrationPlan,
+        tools=[],
+    )
+
+
+async def plan_orchestration(
+    description: str,
+    model: str,
+) -> OrchestrationPlan:
+    result = await Runner.run(
+        build_orchestration_planner(model),
+        description,
+        max_turns=2,
+    )
+
+    plan = result.final_output
+
+    if not isinstance(plan, OrchestrationPlan):
+        raise RuntimeError(
+            "Orchestration planner returned an invalid structured result."
+        )
+
+    return plan
+
 def build_orchestrator(model: str, store: TaskStore, task_id: str) -> Agent:
     return Agent(
         name="Command Center Orchestrator",
@@ -1007,23 +1064,144 @@ async def run_orchestrator(
     )
 
     if decision.specialist == "Orchestrator":
-        agent = build_orchestrator(
+        plan = await plan_orchestration(
+            str(task["description"]),
             model,
-            store,
-            str(task["id"]),
         )
-    else:
-        if decision.specialist not in ROUTABLE_SPECIALISTS:
-            raise PermissionError(
-                f"Unauthorized routing destination: {decision.specialist}"
+
+        store.add_activity(
+            "orchestrator.planned",
+            f"Orchestrator created {len(plan.stages)} execution stage(s).",
+            task_id=str(task["id"]),
+            agent_name="Orchestrator",
+            payload={
+                "reason": plan.reason,
+                "stages": [
+                    {
+                        "specialist": stage.specialist,
+                        "instruction": stage.instruction,
+                    }
+                    for stage in plan.stages
+                ],
+            },
+        )
+
+        stage_outcomes: list[SpecialistOutcome] = []
+        prior_context: list[str] = []
+
+        for stage_number, stage in enumerate(plan.stages, start=1):
+            if stage.specialist not in ROUTABLE_SPECIALISTS:
+                raise PermissionError(
+                    f"Unauthorized orchestration stage: {stage.specialist}"
+                )
+
+            stage_prompt_parts = [
+                f"Original task:\n{task['description']}",
+                f"Current stage instruction:\n{stage.instruction}",
+            ]
+
+            if prior_context:
+                stage_prompt_parts.append(
+                    "Prior stage outcomes and evidence:\n"
+                    + "\n".join(prior_context)
+                )
+
+            stage_prompt = "\n\n".join(stage_prompt_parts)
+
+            store.add_activity(
+                "orchestrator.stage_started",
+                (
+                    f"Orchestration stage {stage_number}/"
+                    f"{len(plan.stages)} started: {stage.specialist}"
+                ),
+                task_id=str(task["id"]),
+                agent_name="Orchestrator",
+                payload={
+                    "stage_number": stage_number,
+                    "specialist": stage.specialist,
+                    "instruction": stage.instruction,
+                },
             )
 
-        agent = build_specialist(
-            decision.specialist,
-            model,
-            store,
-            str(task["id"]),
+            result = await Runner.run(
+                build_specialist(
+                    stage.specialist,
+                    model,
+                    store,
+                    str(task["id"]),
+                ),
+                stage_prompt,
+                max_turns=10,
+            )
+
+            output = getattr(result, "final_output", None)
+
+            if not isinstance(output, SpecialistOutcome):
+                raise RuntimeError(
+                    "Specialist returned an invalid structured outcome."
+                )
+
+            stage_outcomes.append(output)
+            prior_context.append(
+                (
+                    f"{stage.specialist}: {output.summary}\n"
+                    f"Evidence: {output.evidence}"
+                )
+            )
+
+            store.add_activity(
+                "orchestrator.stage_completed",
+                (
+                    f"Orchestration stage {stage_number}/"
+                    f"{len(plan.stages)} finished with status "
+                    f"{output.status}: {stage.specialist}"
+                ),
+                task_id=str(task["id"]),
+                agent_name="Orchestrator",
+                payload={
+                    "stage_number": stage_number,
+                    "specialist": stage.specialist,
+                    "status": output.status,
+                    "summary": output.summary,
+                    "evidence": output.evidence,
+                },
+            )
+
+            if output.status in {"failed", "blocked"}:
+                return output
+
+        aggregate_status = (
+            "partial"
+            if any(outcome.status == "partial" for outcome in stage_outcomes)
+            else "completed"
         )
+        aggregate_summary = " | ".join(
+            f"{stage.specialist}: {outcome.summary}"
+            for stage, outcome in zip(plan.stages, stage_outcomes)
+        )
+        aggregate_evidence = [
+            item
+            for outcome in stage_outcomes
+            for item in outcome.evidence
+        ]
+
+        return SpecialistOutcome(
+            status=aggregate_status,
+            summary=aggregate_summary,
+            evidence=aggregate_evidence,
+        )
+
+    if decision.specialist not in ROUTABLE_SPECIALISTS:
+        raise PermissionError(
+            f"Unauthorized routing destination: {decision.specialist}"
+        )
+
+    agent = build_specialist(
+        decision.specialist,
+        model,
+        store,
+        str(task["id"]),
+    )
 
     result = await Runner.run(
         agent,
