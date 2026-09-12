@@ -1132,6 +1132,90 @@ const statusBadge = (status) => {
 
 
 let latestTaskSnapshot = [];
+let activeAssistantTaskId = null;
+
+function assistantTaskSummary(task) {
+  const raw = task?.result_json;
+
+  if (!raw) return '';
+
+  try {
+    const parsed =
+      typeof raw === 'string'
+        ? JSON.parse(raw)
+        : raw;
+
+    return String(
+      parsed?.output?.summary ||
+      parsed?.summary ||
+      ''
+    ).trim();
+  } catch (_) {
+    return '';
+  }
+}
+
+function updateAssistantTaskStatus() {
+  if (!activeAssistantTaskId) return;
+
+  const task = latestTaskSnapshot.find(
+    item =>
+      String(item.id) === String(activeAssistantTaskId)
+  );
+
+  if (!task) return;
+
+  const result =
+    document.querySelector('#assistant-result');
+
+  if (!result) return;
+
+  const status = task.status || 'unknown';
+
+  if (status === 'awaiting_approval') {
+    result.textContent =
+      'Waiting for human approval · Review the Approvals panel.';
+    return;
+  }
+
+  if (status === 'queued') {
+    result.textContent =
+      'Accepted · queued · waiting to start.';
+    return;
+  }
+
+  if (status === 'running') {
+    const specialist =
+      task.routed_specialist ||
+      task.agent_name ||
+      'Orchestrator';
+
+    result.textContent =
+      `Working · ${specialist}`;
+    return;
+  }
+
+  if (status === 'completed') {
+    const summary = assistantTaskSummary(task);
+
+    result.textContent =
+      summary
+        ? `Completed · ${summary}`
+        : 'Completed successfully.';
+
+    return;
+  }
+
+  if (['failed', 'blocked', 'partial'].includes(status)) {
+    const detail =
+      task.error ||
+      assistantTaskSummary(task) ||
+      'No additional detail was provided.';
+
+    result.textContent =
+      `${status.replaceAll('_', ' ')} · ${detail}`;
+  }
+}
 
 function taskResultDisplay(task) {
   const raw = task?.result_json;
@@ -1712,6 +1796,8 @@ latestTaskSnapshot = tasks;
       `).join('') ||
       `<div class="empty">No recent activity</div>`;
 
+    updateAssistantTaskStatus();
+
     document.dispatchEvent(
       new CustomEvent('command-center:refreshed')
     );
@@ -1838,6 +1924,8 @@ document
           body.requires_approval
             ? ' · Human approval required'
             : '';
+
+        activeAssistantTaskId = body.task_id;
 
         result.textContent =
           `Accepted · ${body.status}` +
