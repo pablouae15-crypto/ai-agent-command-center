@@ -25,6 +25,7 @@ jobs:
       - name: Verify local test dependencies
         shell: cmd
         run: |
+          git config --global --add safe.directory "D:\Shared-Local-Execution-Engine-Sandbox"
           if not exist "D:\Shared-Local-Execution-Engine\engine" (
             echo D:\Shared-Local-Execution-Engine is required by the test suite.
             exit /b 1
