@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 import pytest
 
 from write_approval import (
+    VerifiedEditBatchRequest,
+    VerifiedEditOperation,
     VerifiedEditRequest,
     VerifiedFileWriteRequest,
     VerifiedGmailDraftRequest,
@@ -349,3 +351,159 @@ def test_gmail_draft_action_type_is_distinct() -> None:
     action = approval_action_for_request(request)
 
     assert '"type":"verified_gmail_draft"' in action
+
+def make_batch_request(
+    *,
+    edits: tuple[VerifiedEditOperation, ...] | None = None,
+) -> VerifiedEditBatchRequest:
+    if edits is None:
+        edits = (
+            VerifiedEditOperation(
+                path=r"D:\Shared-Local-Execution-Engine-Sandbox\app.py",
+                old_text="return a - b",
+                new_text="return a + b",
+                expected_replacements=1,
+            ),
+            VerifiedEditOperation(
+                path=r"D:\Shared-Local-Execution-Engine-Sandbox\test_app.py",
+                old_text="assert add(2, 3) == -1",
+                new_text="assert add(2, 3) == 5",
+                expected_replacements=1,
+            ),
+        )
+
+    return VerifiedEditBatchRequest(
+        task_id="task-batch-001",
+        capability="replace_text_batch",
+        repository_path=r"D:\Shared-Local-Execution-Engine-Sandbox",
+        verification_profile="sandbox_pytest",
+        edits=edits,
+    )
+
+
+def test_batch_approval_uses_distinct_action_type() -> None:
+    request = make_batch_request()
+
+    action = approval_action_for_request(request)
+
+    assert '"type":"verified_edit_batch"' in action
+    assert '"capability":"replace_text_batch"' in action
+    assert '"edits":[' in action
+
+
+def test_exact_batch_approval_validates() -> None:
+    request = make_batch_request()
+    row = {
+        "id": "approval-batch-001",
+        "task_id": request.task_id,
+        "action": approval_action_for_request(request),
+        "status": "approved",
+        "decided_at": "2026-09-12T00:00:00+00:00",
+        "decided_by": "test-user",
+    }
+
+    approval = validate_stored_approval(row, request)
+
+    assert approval.task_id == request.task_id
+    assert approval.capability == "replace_text_batch"
+    assert approval.status == "approved"
+
+
+def test_modified_batch_edit_text_invalidates_approval() -> None:
+    original = make_batch_request()
+    row = {
+        "id": "approval-batch-001",
+        "task_id": original.task_id,
+        "action": approval_action_for_request(original),
+        "status": "approved",
+        "decided_at": "2026-09-12T00:00:00+00:00",
+        "decided_by": "test-user",
+    }
+
+    modified = make_batch_request(
+        edits=(
+            original.edits[0],
+            VerifiedEditOperation(
+                path=original.edits[1].path,
+                old_text=original.edits[1].old_text,
+                new_text="assert add(2, 3) == 6",
+                expected_replacements=1,
+            ),
+        ),
+    )
+
+    with pytest.raises(PermissionError):
+        validate_stored_approval(row, modified)
+
+
+def test_modified_batch_path_invalidates_approval() -> None:
+    original = make_batch_request()
+    row = {
+        "id": "approval-batch-001",
+        "task_id": original.task_id,
+        "action": approval_action_for_request(original),
+        "status": "approved",
+        "decided_at": "2026-09-12T00:00:00+00:00",
+        "decided_by": "test-user",
+    }
+
+    modified = make_batch_request(
+        edits=(
+            VerifiedEditOperation(
+                path=r"D:\Shared-Local-Execution-Engine-Sandbox\other.py",
+                old_text=original.edits[0].old_text,
+                new_text=original.edits[0].new_text,
+                expected_replacements=1,
+            ),
+            original.edits[1],
+        ),
+    )
+
+    with pytest.raises(PermissionError):
+        validate_stored_approval(row, modified)
+
+
+def test_reordered_batch_invalidates_approval() -> None:
+    original = make_batch_request()
+    row = {
+        "id": "approval-batch-001",
+        "task_id": original.task_id,
+        "action": approval_action_for_request(original),
+        "status": "approved",
+        "decided_at": "2026-09-12T00:00:00+00:00",
+        "decided_by": "test-user",
+    }
+
+    reordered = make_batch_request(
+        edits=(original.edits[1], original.edits[0]),
+    )
+
+    with pytest.raises(PermissionError):
+        validate_stored_approval(row, reordered)
+
+
+def test_extra_batch_edit_invalidates_approval() -> None:
+    original = make_batch_request()
+    row = {
+        "id": "approval-batch-001",
+        "task_id": original.task_id,
+        "action": approval_action_for_request(original),
+        "status": "approved",
+        "decided_at": "2026-09-12T00:00:00+00:00",
+        "decided_by": "test-user",
+    }
+
+    expanded = make_batch_request(
+        edits=original.edits
+        + (
+            VerifiedEditOperation(
+                path=r"D:\Shared-Local-Execution-Engine-Sandbox\helper.py",
+                old_text="OLD",
+                new_text="NEW",
+                expected_replacements=1,
+            ),
+        ),
+    )
+
+    with pytest.raises(PermissionError):
+        validate_stored_approval(row, expanded)

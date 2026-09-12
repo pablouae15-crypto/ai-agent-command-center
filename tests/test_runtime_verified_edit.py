@@ -7,7 +7,11 @@ from types import SimpleNamespace
 import runtime as runtime_module
 from runtime import Runtime
 from store import TaskStore
-from write_approval import VerifiedEditRequest
+from write_approval import (
+    VerifiedEditBatchRequest,
+    VerifiedEditOperation,
+    VerifiedEditRequest,
+)
 
 
 def test_approved_verified_edit_runtime_bypasses_llm(
@@ -607,3 +611,222 @@ def test_approved_verified_edit_completes_blocked_stage_and_resumes_parent_orche
     assert len(calls) == 1
     assert calls[0]["task_id"] == str(task["id"])
     assert calls[0]["approval_id"] == str(pending["id"])
+
+def test_approved_verified_edit_batch_resumes_persisted_workflow(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import json
+
+    store = TaskStore(
+        db_path=tmp_path / "runtime-workflow-verified-edit-batch.db",
+        audit_log_path=tmp_path / "audit.jsonl",
+    )
+    store.seed_defaults()
+
+    task = store.create_task(
+        title="Autonomous sandbox multi-file fix",
+        description=(
+            "Review the sandbox project, find a real problem, fix it, "
+            "test it, and give me the result."
+        ),
+        agent_name="Orchestrator",
+        priority="High",
+        side_effect_level="none",
+        requires_approval=False,
+    )
+
+    child = store.create_task(
+        title="Stage 1: Developer",
+        description="Inspect the sandbox and identify the exact multi-file fix.",
+        agent_name="Developer",
+        priority="High",
+        parent_task_id=str(task["id"]),
+        workflow_id=str(task["id"]),
+        stage_index=1,
+        workflow_managed=True,
+    )
+
+    edits = (
+        VerifiedEditOperation(
+            path=r"D:\Shared-Local-Execution-Engine-Sandbox\app.py",
+            old_text="return a - b",
+            new_text="return a + b",
+            expected_replacements=1,
+        ),
+        VerifiedEditOperation(
+            path=r"D:\Shared-Local-Execution-Engine-Sandbox\test_app.py",
+            old_text="assert add(2, 3) == -1",
+            new_text="assert add(2, 3) == 5",
+            expected_replacements=1,
+        ),
+    )
+
+    store.start_workflow_stage(str(child["id"]))
+    store.finish_workflow_stage(
+        str(child["id"]),
+        status="blocked",
+        result={
+            "summary": "A multi-file sandbox fix is ready for exact human approval.",
+            "evidence": ["Inspected both implementation and regression test."],
+            "exact_edit_batch_proposal": {
+                "capability": "replace_text_batch",
+                "edits": [
+                    {
+                        "path": edit.path,
+                        "old_text": edit.old_text,
+                        "new_text": edit.new_text,
+                        "expected_replacements": edit.expected_replacements,
+                    }
+                    for edit in edits
+                ],
+            },
+        },
+    )
+
+    request = VerifiedEditBatchRequest(
+        task_id=str(task["id"]),
+        capability="replace_text_batch",
+        repository_path=r"D:\Shared-Local-Execution-Engine-Sandbox",
+        verification_profile="sandbox_pytest",
+        edits=edits,
+    )
+
+    pending = store.create_exact_approval(
+        request,
+        reason="Execute this exact verified edit batch",
+    )
+    store.decide_approval(
+        str(pending["id"]),
+        "approved",
+        decided_by="runtime-test-user",
+    )
+
+    calls = []
+
+    def fake_execute_approved_verified_edit_batch(
+        *,
+        store,
+        task_id,
+        approval_id,
+        repository_path,
+        edits,
+    ):
+        calls.append(
+            {
+                "task_id": task_id,
+                "approval_id": approval_id,
+                "repository_path": repository_path,
+                "edits": edits,
+            }
+        )
+        return {
+            "status": "verified",
+            "verified": True,
+        }
+
+    monkeypatch.setattr(
+        runtime_module,
+        "execute_approved_verified_edit_batch",
+        fake_execute_approved_verified_edit_batch,
+        raising=False,
+    )
+
+    specialist_calls = []
+
+    async def fake_run_specialist(task_arg, model, store_arg):
+        specialist_calls.append(
+            {
+                "task_id": str(task_arg["id"]),
+                "approval_id": task_arg.get("approval_id"),
+            }
+        )
+        return runtime_module.SpecialistOutcome(
+            status="completed",
+            summary="Persisted orchestration workflow resumed successfully.",
+            evidence=["post-batch workflow continuation ran"],
+        )
+
+    monkeypatch.setattr(
+        runtime_module,
+        "run_specialist",
+        fake_run_specialist,
+    )
+
+    settings = SimpleNamespace(
+        enable_agent_runs=True,
+        worker_poll_seconds=0.01,
+        scheduler_poll_seconds=3600,
+        openai_model="unused",
+    )
+
+    runtime = Runtime(store, settings)
+
+    async def run_worker():
+        worker = asyncio.create_task(runtime._worker_loop())
+
+        for _ in range(100):
+            refreshed_child = store.get_task(str(child["id"]))
+            refreshed_parent = store.get_task(str(task["id"]))
+
+            if (
+                refreshed_child is not None
+                and refreshed_child["status"] == "completed"
+                and refreshed_parent is not None
+                and refreshed_parent["status"] == "completed"
+            ):
+                break
+
+            await asyncio.sleep(0.01)
+
+        runtime._stop.set()
+
+        try:
+            await asyncio.wait_for(worker, timeout=1)
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(run_worker())
+
+    refreshed_child = store.get_task(str(child["id"]))
+    refreshed_parent = store.get_task(str(task["id"]))
+
+    assert refreshed_child is not None
+    assert refreshed_child["status"] == "completed"
+
+    child_result = json.loads(refreshed_child["result_json"])
+    assert child_result == {
+        "summary": (
+            "Verified edit batch applied successfully and "
+            "sandbox_pytest verification passed."
+        ),
+        "evidence": [
+            "Files: "
+            r"D:\Shared-Local-Execution-Engine-Sandbox\app.py, "
+            r"D:\Shared-Local-Execution-Engine-Sandbox\test_app.py",
+            "Exact approved replace_text_batch operation completed successfully.",
+            "Verification profile: sandbox_pytest",
+        ],
+    }
+
+    assert refreshed_parent is not None
+    assert refreshed_parent["status"] == "completed"
+    assert refreshed_parent["approval_id"] is None
+
+    assert len(calls) == 1
+    assert calls[0]["task_id"] == str(task["id"])
+    assert calls[0]["approval_id"] == str(pending["id"])
+    assert calls[0]["repository_path"] == request.repository_path
+    assert calls[0]["edits"] == [
+        {
+            "path": edit.path,
+            "old_text": edit.old_text,
+            "new_text": edit.new_text,
+            "expected_replacements": edit.expected_replacements,
+        }
+        for edit in edits
+    ]
+
+    assert len(specialist_calls) == 1
+    assert specialist_calls[0]["task_id"] == str(task["id"])
+    assert specialist_calls[0]["approval_id"] is None

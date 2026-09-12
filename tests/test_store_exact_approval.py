@@ -3,7 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from store import TaskStore
-from write_approval import VerifiedEditRequest, approval_action_for_request
+from write_approval import (
+    VerifiedEditBatchRequest,
+    VerifiedEditOperation,
+    VerifiedEditRequest,
+    approval_action_for_request,
+)
 
 
 def make_store(tmp_path: Path) -> TaskStore:
@@ -392,3 +397,59 @@ def test_blocked_task_matching_exact_approval_can_be_approved(tmp_path: Path) ->
     assert refreshed_task["status"] == "queued"
     assert refreshed_task["approval_id"] == pending["id"]
     assert refreshed_task["error"] is None
+
+def test_verified_edit_batch_exact_approval_persists_execution_payload(
+    tmp_path: Path,
+) -> None:
+    import json
+
+    store = make_store(tmp_path)
+    task = make_task(store)
+
+    request = VerifiedEditBatchRequest(
+        task_id=str(task["id"]),
+        capability="replace_text_batch",
+        repository_path=r"D:\Shared-Local-Execution-Engine-Sandbox",
+        verification_profile="sandbox_pytest",
+        edits=(
+            VerifiedEditOperation(
+                path=r"D:\Shared-Local-Execution-Engine-Sandbox\app.py",
+                old_text="return a - b",
+                new_text="return a + b",
+                expected_replacements=1,
+            ),
+            VerifiedEditOperation(
+                path=r"D:\Shared-Local-Execution-Engine-Sandbox\test_app.py",
+                old_text="assert add(2, 3) == -1",
+                new_text="assert add(2, 3) == 5",
+                expected_replacements=1,
+            ),
+        ),
+    )
+
+    approval = store.create_exact_approval(request)
+
+    payload = json.loads(approval["display_payload_json"])
+
+    assert payload == {
+        "type": "verified_edit_batch_execution",
+        "capability": "replace_text_batch",
+        "repository_path": request.repository_path,
+        "verification_profile": request.verification_profile,
+        "edits": [
+            {
+                "path": request.edits[0].path,
+                "old_text": request.edits[0].old_text,
+                "new_text": request.edits[0].new_text,
+                "expected_replacements": 1,
+            },
+            {
+                "path": request.edits[1].path,
+                "old_text": request.edits[1].old_text,
+                "new_text": request.edits[1].new_text,
+                "expected_replacements": 1,
+            },
+        ],
+    }
+
+    assert approval["action"] == approval_action_for_request(request)

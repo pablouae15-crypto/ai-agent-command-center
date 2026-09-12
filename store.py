@@ -10,6 +10,7 @@ from typing import Any
 
 from write_approval import (
     VerifiedApprovalRequest,
+    VerifiedEditBatchRequest,
     VerifiedGmailDraftRequest,
     approval_action_for_request,
 )
@@ -697,6 +698,23 @@ class TaskStore:
                 "bcc": list(request.bcc),
                 "subject": request.subject,
                 "body": request.body,
+            }
+
+        elif isinstance(request, VerifiedEditBatchRequest):
+            display_payload = {
+            "type": "verified_edit_batch_execution",
+            "capability": request.capability,
+            "repository_path": request.repository_path,
+            "verification_profile": request.verification_profile,
+            "edits": [
+            {
+            "path": edit.path,
+            "old_text": edit.old_text,
+            "new_text": edit.new_text,
+            "expected_replacements": edit.expected_replacements,
+            }
+            for edit in request.edits
+            ],
             }
 
         elif request.capability == "replace_text":

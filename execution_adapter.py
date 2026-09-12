@@ -199,3 +199,25 @@ class ExecutionEngineAdapter:
             expected_sha256=expected_sha256,
             max_bytes=max_bytes,
         )
+
+    def verified_replace_text_batch(
+        self,
+        edits: list[dict[str, Any]],
+        *,
+        repository_path: str | Path,
+        verification_profile: str,
+        task_id: str,
+        approval: ApprovalRecord,
+    ) -> dict[str, Any]:
+        if not isinstance(approval, ApprovalRecord):
+            raise TypeError(
+                "verified_replace_text_batch requires a validated ApprovalRecord."
+            )
+
+        return self._require_ready().verified_replace_text_batch(
+            edits,
+            repository_path=repository_path,
+            verification_profile=verification_profile,
+            task_id=task_id,
+            approval=approval,
+        )

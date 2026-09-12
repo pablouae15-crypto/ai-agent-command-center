@@ -9,6 +9,58 @@ from engine.approvals import ApprovalRecord
 
 
 @dataclass(frozen=True)
+class VerifiedEditOperation:
+    path: str
+    old_text: str
+    new_text: str
+    expected_replacements: int = 1
+
+    def canonical_payload(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "old_text_sha256": hashlib.sha256(
+                self.old_text.encode("utf-8")
+            ).hexdigest(),
+            "new_text_sha256": hashlib.sha256(
+                self.new_text.encode("utf-8")
+            ).hexdigest(),
+            "expected_replacements": self.expected_replacements,
+        }
+
+
+@dataclass(frozen=True)
+class VerifiedEditBatchRequest:
+    task_id: str
+    capability: str
+    repository_path: str
+    verification_profile: str
+    edits: tuple[VerifiedEditOperation, ...]
+
+    def canonical_payload(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "capability": self.capability,
+            "repository_path": self.repository_path,
+            "verification_profile": self.verification_profile,
+            "edits": [
+                edit.canonical_payload()
+                for edit in self.edits
+            ],
+        }
+
+    def fingerprint(self) -> str:
+        payload = json.dumps(
+            self.canonical_payload(),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+        return hashlib.sha256(
+            payload.encode("utf-8")
+        ).hexdigest()
+
+
+@dataclass(frozen=True)
 class VerifiedEditRequest:
     task_id: str
     capability: str
@@ -119,6 +171,7 @@ class VerifiedGmailDraftRequest:
 
 VerifiedApprovalRequest = (
     VerifiedEditRequest
+    | VerifiedEditBatchRequest
     | VerifiedFileWriteRequest
     | VerifiedGmailDraftRequest
 )
@@ -127,7 +180,9 @@ VerifiedApprovalRequest = (
 def approval_action_for_request(
     request: VerifiedApprovalRequest,
 ) -> str:
-    if isinstance(request, VerifiedFileWriteRequest):
+    if isinstance(request, VerifiedEditBatchRequest):
+        action_type = "verified_edit_batch"
+    elif isinstance(request, VerifiedFileWriteRequest):
         action_type = "verified_file_write"
     elif isinstance(request, VerifiedGmailDraftRequest):
         action_type = "verified_gmail_draft"

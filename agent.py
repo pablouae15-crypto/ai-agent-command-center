@@ -437,6 +437,85 @@ def execute_approved_verified_edit(
     return str(result)
 
 
+def execute_approved_verified_edit_batch(
+    *,
+    store: TaskStore,
+    task_id: str,
+    approval_id: str,
+    repository_path: str,
+    edits: list[dict],
+) -> str:
+    """Execute one exact stored and human-approved sandbox edit batch."""
+    from write_approval import VerifiedEditBatchRequest, VerifiedEditOperation
+
+    if not approval_id.strip():
+        raise PermissionError("approval_id is required.")
+
+    if not edits:
+        raise ValueError("edits must contain at least one edit.")
+
+    _require_sandbox_path(repository_path, repository=True)
+
+    normalized_edits = []
+    operations = []
+
+    for edit in edits:
+        if not isinstance(edit, dict):
+            raise TypeError("Each batch edit must be a dictionary.")
+
+        path = str(edit.get("path") or "")
+        old_text = str(edit.get("old_text") or "")
+        new_text = str(edit.get("new_text") or "")
+        expected_replacements = int(edit.get("expected_replacements", 1))
+
+        if expected_replacements < 1:
+            raise ValueError(
+                "expected_replacements must be at least 1."
+            )
+
+        _require_sandbox_path(path)
+
+        normalized_edits.append(
+            {
+                "path": path,
+                "old_text": old_text,
+                "new_text": new_text,
+                "expected_replacements": expected_replacements,
+            }
+        )
+        operations.append(
+            VerifiedEditOperation(
+                path=path,
+                old_text=old_text,
+                new_text=new_text,
+                expected_replacements=expected_replacements,
+            )
+        )
+
+    request = VerifiedEditBatchRequest(
+        task_id=task_id,
+        capability="replace_text_batch",
+        repository_path=repository_path,
+        verification_profile="sandbox_pytest",
+        edits=tuple(operations),
+    )
+
+    approval = validate_stored_approval(
+        store.get_approval(approval_id.strip()),
+        request,
+    )
+
+    result = execution_engine.verified_replace_text_batch(
+        normalized_edits,
+        repository_path=repository_path,
+        verification_profile="sandbox_pytest",
+        task_id=task_id,
+        approval=approval,
+    )
+
+    return str(result)
+
+
 def build_verified_replace_text_tool(
     store: TaskStore,
     task_id: str,

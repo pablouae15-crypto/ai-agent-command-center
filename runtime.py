@@ -10,6 +10,7 @@ from agent import SpecialistOutcome
 from agent import run_specialist
 from agent import execute_approved_gmail_draft
 from agent import execute_approved_verified_edit
+from agent import execute_approved_verified_edit_batch
 from config import Settings
 from store import TaskStore
 from write_approval import VerifiedEditRequest
@@ -319,6 +320,16 @@ class Runtime:
                                         preview.get("expected_replacements", 1)
                                     ),
                                 )
+                            elif preview.get("type") == "verified_edit_batch_execution":
+                                output = execute_approved_verified_edit_batch(
+                                    store=self.store,
+                                    task_id=str(task["id"]),
+                                    approval_id=approval_id,
+                                    repository_path=str(
+                                        preview.get("repository_path") or ""
+                                    ),
+                                    edits=list(preview.get("edits") or []),
+                                )
                             else:
                                 output = await run_specialist(
                                     task,
@@ -339,23 +350,37 @@ class Runtime:
                                     f"{normalized_output}"
                                 )
 
-                            if preview.get("type") == "verified_edit_execution":
-                                output = {
-                                    "status": "completed",
-                                    "summary": (
-                                        "Verified edit applied successfully and "
-                                        "sandbox_pytest verification passed."
-                                    ),
-                                    "evidence": [
-                                        f"File: {preview.get('path') or 'unknown'}",
-                                        (
-                                            "Exact approved replace_text operation "
-                                            "completed successfully."
+                            if preview.get("type") in {"verified_edit_execution", "verified_edit_batch_execution"}:
+                                if preview.get("type") == "verified_edit_batch_execution":
+                                    paths = ", ".join(
+                                        str(edit.get("path") or "unknown")
+                                        for edit in (preview.get("edits") or [])
+                                    )
+                                    output = {
+                                        "status": "completed",
+                                        "summary": (
+                                            "Verified edit batch applied successfully and "
+                                            "sandbox_pytest verification passed."
                                         ),
-                                        "Verification profile: sandbox_pytest",
-                                    ],
-                                }
-
+                                        "evidence": [
+                                            f"Files: {paths}",
+                                            "Exact approved replace_text_batch operation completed successfully.",
+                                            "Verification profile: sandbox_pytest",
+                                        ],
+                                    }
+                                else:
+                                    output = {
+                                        "status": "completed",
+                                        "summary": (
+                                            "Verified edit applied successfully and "
+                                            "sandbox_pytest verification passed."
+                                        ),
+                                        "evidence": [
+                                            f"File: {preview.get('path') or 'unknown'}",
+                                            "Exact approved replace_text operation completed successfully.",
+                                            "Verification profile: sandbox_pytest",
+                                        ],
+                                    }
                                 workflow_tasks = self.store.list_workflow_tasks(
                                     str(task["id"])
                                 )
@@ -368,20 +393,33 @@ class Runtime:
                                     saved_result = json.loads(
                                         workflow_task["result_json"] or "{}"
                                     )
-                                    proposal = saved_result.get("exact_edit_proposal") or {}
+                                    proposal = (
+                                        saved_result.get("exact_edit_batch_proposal")
+                                        or saved_result.get("exact_edit_proposal")
+                                        or {}
+                                    )
 
-                                    if (
-                                        proposal.get("capability") == preview.get("capability")
-                                        and proposal.get("path") == preview.get("path")
-                                        and proposal.get("old_text") == preview.get("old_text")
-                                        and proposal.get("new_text") == preview.get("new_text")
-                                        and int(proposal.get("expected_replacements", 1))
-                                        == int(preview.get("expected_replacements", 1))
+                                    if proposal.get("capability") != preview.get("capability"):
+                                        continue
+
+                                    if "edits" in proposal:
+                                        if proposal.get("edits") != (
+                                            preview.get("edits") or []
+                                        ):
+                                            continue
+                                    elif (
+                                        proposal.get("path") != preview.get("path")
+                                        or proposal.get("old_text") != preview.get("old_text")
+                                        or proposal.get("new_text") != preview.get("new_text")
+                                        or int(proposal.get("expected_replacements", 1))
+                                            != int(preview.get("expected_replacements", 1))
                                     ):
-                                        matching_blocked_stage = workflow_task
-                                        break
+                                        continue
 
-                                if matching_blocked_stage is not None:
+                                    matching_blocked_stage = workflow_task
+                                    break
+
+                            if matching_blocked_stage is not None:
                                     self.store.resume_workflow_stage(
                                         str(matching_blocked_stage["id"])
                                     )
