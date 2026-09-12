@@ -22,3 +22,13 @@ def test_task_operations_defaults_to_newest_first() -> None:
 
     assert "taskCreatedAt" in source
     assert "bCreated - aCreated" in source
+
+
+def test_task_details_surfaces_status_result_before_full_context() -> None:
+    source = HTML_PATH.read_text(encoding="utf-8")
+
+    assert "function taskOutcomeDisplay(task)" in source
+    assert "Task Result" in source
+    assert "taskOutcomeDisplay(task)" in source
+    assert "task.error || summary || 'No additional detail was provided.'" in source
+    assert source.index("Task Result") < source.index("Full Description")
