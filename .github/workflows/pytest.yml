@@ -1,0 +1,50 @@
+name: Pytest
+
+on:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    # The suite uses the separate local execution engine and sandbox on D:.
+    # Keep this off pull_request events because self-hosted runners are trusted
+    # machines and must not execute untrusted fork code.
+    runs-on: [self-hosted, windows, x64]
+    env:
+      EXECUTION_ENGINE_ENABLED: "true"
+      EXECUTION_ENGINE_WORKSPACE_ROOTS: "D:\\Shared-Local-Execution-Engine-Sandbox"
+      EXECUTION_ENGINE_AUDIT_LOG: "D:\\AI-Agent-Command-Center\\logs\\execution-engine.jsonl"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Verify local test dependencies
+        shell: cmd
+        run: |
+          git config --global --add safe.directory "D:\Shared-Local-Execution-Engine-Sandbox"
+          if not exist "D:\Shared-Local-Execution-Engine\engine" (
+            echo D:\Shared-Local-Execution-Engine is required by the test suite.
+            exit /b 1
+          )
+          if not exist "D:\Shared-Local-Execution-Engine-Sandbox" (
+            echo D:\Shared-Local-Execution-Engine-Sandbox is required by the test suite.
+            exit /b 1
+          )
+          "D:\AI\Python312\python.exe" --version
+          if errorlevel 1 exit /b 1
+
+      - name: Install project and test dependencies
+        shell: cmd
+        run: |
+          "D:\AI\Python312\python.exe" -m pip install --upgrade pip
+          "D:\AI\Python312\python.exe" -m pip install -e .
+          "D:\AI\Python312\python.exe" -m pip install pytest
+
+      - name: Run pytest
+        shell: cmd
+        run: |
+          "D:\AI\Python312\python.exe" -m pytest -q
