@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 from datetime import datetime, timezone
 from email.message import EmailMessage
@@ -1064,43 +1065,73 @@ async def run_orchestrator(
     )
 
     if decision.specialist == "Orchestrator":
-        plan = await plan_orchestration(
-            str(task["description"]),
-            model,
-        )
+        workflow_stage_tasks = store.list_workflow_tasks(str(task["id"]))
 
-        store.add_activity(
-            "orchestrator.planned",
-            f"Orchestrator created {len(plan.stages)} execution stage(s).",
-            task_id=str(task["id"]),
-            agent_name="Orchestrator",
-            payload={
-                "reason": plan.reason,
-                "stages": [
-                    {
-                        "specialist": stage.specialist,
-                        "instruction": stage.instruction,
-                    }
-                    for stage in plan.stages
+        if workflow_stage_tasks:
+            plan = OrchestrationPlan(
+                reason="Resume persisted orchestration workflow.",
+                stages=[
+                    OrchestrationStage(
+                        specialist=row["agent_name"],
+                        instruction=row["description"],
+                    )
+                    for row in workflow_stage_tasks
                 ],
-            },
-        )
-
-        workflow_stage_tasks = [
-            store.create_task(
-                title=f"Stage {stage_number}: {stage.specialist}",
-                description=stage.instruction,
-                agent_name=stage.specialist,
-                priority=str(task["priority"]),
-                side_effect_level="none",
-                requires_approval=False,
-                parent_task_id=str(task["id"]),
-                workflow_id=str(task["id"]),
-                stage_index=stage_number,
-                workflow_managed=True,
             )
-            for stage_number, stage in enumerate(plan.stages, start=1)
-        ]
+
+            store.add_activity(
+                "orchestrator.resumed",
+                f"Orchestrator reused {len(plan.stages)} persisted execution stage(s).",
+                task_id=str(task["id"]),
+                agent_name="Orchestrator",
+                payload={
+                    "stages": [
+                        {
+                            "specialist": stage.specialist,
+                            "instruction": stage.instruction,
+                        }
+                        for stage in plan.stages
+                    ],
+                },
+            )
+        else:
+            plan = await plan_orchestration(
+                str(task["description"]),
+                model,
+            )
+
+            store.add_activity(
+                "orchestrator.planned",
+                f"Orchestrator created {len(plan.stages)} execution stage(s).",
+                task_id=str(task["id"]),
+                agent_name="Orchestrator",
+                payload={
+                    "reason": plan.reason,
+                    "stages": [
+                        {
+                            "specialist": stage.specialist,
+                            "instruction": stage.instruction,
+                        }
+                        for stage in plan.stages
+                    ],
+                },
+            )
+
+            workflow_stage_tasks = [
+                store.create_task(
+                    title=f"Stage {stage_number}: {stage.specialist}",
+                    description=stage.instruction,
+                    agent_name=stage.specialist,
+                    priority=str(task["priority"]),
+                    side_effect_level="none",
+                    requires_approval=False,
+                    parent_task_id=str(task["id"]),
+                    workflow_id=str(task["id"]),
+                    stage_index=stage_number,
+                    workflow_managed=True,
+                )
+                for stage_number, stage in enumerate(plan.stages, start=1)
+            ]
 
         stage_outcomes: list[SpecialistOutcome] = []
         prior_context: list[str] = []
@@ -1112,10 +1143,90 @@ async def run_orchestrator(
                 )
 
             workflow_stage_task = workflow_stage_tasks[stage_number - 1]
-            store.start_workflow_stage(str(workflow_stage_task["id"]))
+
+            if workflow_stage_task["status"] == "completed":
+                saved_result = json.loads(workflow_stage_task["result_json"] or "{}")
+                output = SpecialistOutcome(
+                    status="completed",
+                    summary=str(saved_result.get("summary", "")),
+                    evidence=[
+                        str(item)
+                        for item in saved_result.get("evidence", [])
+                    ],
+                )
+                stage_outcomes.append(output)
+                prior_context.append(
+                    (
+                        f"{stage.specialist}: {output.summary}\n"
+                        f"Evidence: {output.evidence}"
+                    )
+                )
+                continue
+
+            if workflow_stage_task["status"] == "blocked":
+                approval_id = str(task.get("approval_id") or "").strip()
+                approval = (
+                    store.get_approval(approval_id)
+                    if approval_id
+                    else None
+                )
+
+                if (
+                    not approval
+                    or approval.get("status") != "approved"
+                    or str(approval.get("task_id") or "") != str(task["id"])
+                ):
+                    saved_result = json.loads(
+                        workflow_stage_task["result_json"] or "{}"
+                    )
+                    return SpecialistOutcome(
+                        status="blocked",
+                        summary=str(
+                            saved_result.get(
+                                "summary",
+                                workflow_stage_task.get("error") or "",
+                            )
+                        ),
+                        evidence=[
+                            str(item)
+                            for item in saved_result.get("evidence", [])
+                        ],
+                    )
+
+                store.resume_workflow_stage(
+                    str(workflow_stage_task["id"])
+                )
+
+            elif workflow_stage_task["status"] != "queued":
+                saved_result = json.loads(
+                    workflow_stage_task["result_json"] or "{}"
+                )
+                return SpecialistOutcome(
+                    status=workflow_stage_task["status"],
+                    summary=str(
+                        saved_result.get(
+                            "summary",
+                            workflow_stage_task.get("error") or "",
+                        )
+                    ),
+                    evidence=[
+                        str(item)
+                        for item in saved_result.get("evidence", [])
+                    ],
+                )
+
+            else:
+                store.start_workflow_stage(
+                    str(workflow_stage_task["id"])
+                )
 
             stage_prompt_parts = [
                 f"Original task:\n{task['description']}",
+                f"Parent task ID:\n{task['id']}",
+                (
+                    "Authorized local sandbox workspace:\n"
+                    r"D:\Shared-Local-Execution-Engine-Sandbox"
+                ),
                 f"Current stage instruction:\n{stage.instruction}",
             ]
 

@@ -244,6 +244,18 @@ def tasks() -> list[dict]:
     return store.list_tasks()
 
 
+
+
+@app.get("/api/tasks/{task_id}/workflow")
+def task_workflow(task_id: str) -> dict:
+    task = store.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+
+    return {
+        "task": task,
+        "stages": store.list_workflow_tasks(task_id),
+    }
 @app.post("/api/tasks", status_code=201)
 def create_task(request: TaskCreate) -> dict:
     payload = request.model_dump()

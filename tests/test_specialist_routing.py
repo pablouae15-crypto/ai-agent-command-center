@@ -968,12 +968,7 @@ def test_run_orchestrator_persists_managed_workflow_stage_tasks(
         )
     )
 
-    children = [
-        row
-        for row in store.list_tasks(include_archived=True)
-        if row["parent_task_id"] == task["id"]
-    ]
-    children.sort(key=lambda row: row["stage_index"])
+    children = store.list_workflow_tasks(str(task["id"]))
 
     assert outcome.status == "completed"
     assert len(children) == 2
@@ -1057,12 +1052,7 @@ def test_run_orchestrator_leaves_later_persisted_stage_queued_when_blocked(
         )
     )
 
-    children = [
-        row
-        for row in store.list_tasks(include_archived=True)
-        if row["parent_task_id"] == task["id"]
-    ]
-    children.sort(key=lambda row: row["stage_index"])
+    children = store.list_workflow_tasks(str(task["id"]))
 
     assert outcome.status == "blocked"
     assert len(children) == 2
@@ -1120,11 +1110,7 @@ def test_run_orchestrator_marks_persisted_stage_failed_on_runner_exception(
     with pytest.raises(RuntimeError, match="specialist execution failed"):
         asyncio.run(agent.run_orchestrator(task, "gpt-5.6", store))
 
-    children = [
-        row
-        for row in store.list_tasks(include_archived=True)
-        if row["parent_task_id"] == task["id"]
-    ]
+    children = store.list_workflow_tasks(str(task["id"]))
 
     assert len(children) == 1
     assert children[0]["status"] == "failed"
@@ -1183,12 +1169,306 @@ def test_run_orchestrator_marks_persisted_stage_failed_on_invalid_output(
     ):
         asyncio.run(agent.run_orchestrator(task, "gpt-5.6", store))
 
-    children = [
-        row
-        for row in store.list_tasks(include_archived=True)
-        if row["parent_task_id"] == task["id"]
-    ]
+    children = store.list_workflow_tasks(str(task["id"]))
 
     assert len(children) == 1
     assert children[0]["status"] == "failed"
     assert children[0]["error"] is not None
+
+def test_run_orchestrator_reuses_completed_persisted_workflow_without_replanning(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = make_store(tmp_path)
+    store.seed_defaults()
+    task = store.create_task(
+        title="Resume completed orchestration",
+        description="Implement and verify the requested change.",
+        agent_name="Orchestrator",
+        priority="High",
+        side_effect_level="none",
+        requires_approval=False,
+    )
+
+    developer = store.create_task(
+        title="Stage 1: Developer",
+        description="Implement the requested change.",
+        agent_name="Developer",
+        priority="High",
+        parent_task_id=str(task["id"]),
+        workflow_id=str(task["id"]),
+        stage_index=1,
+        workflow_managed=True,
+    )
+    qa = store.create_task(
+        title="Stage 2: QA",
+        description="Verify the implementation.",
+        agent_name="QA",
+        priority="High",
+        parent_task_id=str(task["id"]),
+        workflow_id=str(task["id"]),
+        stage_index=2,
+        workflow_managed=True,
+    )
+
+    store.start_workflow_stage(str(developer["id"]))
+    store.finish_workflow_stage(
+        str(developer["id"]),
+        status="completed",
+        result={
+            "summary": "Developer completed.",
+            "evidence": ["developer evidence"],
+        },
+    )
+    store.start_workflow_stage(str(qa["id"]))
+    store.finish_workflow_stage(
+        str(qa["id"]),
+        status="completed",
+        result={
+            "summary": "QA completed.",
+            "evidence": ["qa evidence"],
+        },
+    )
+
+    async def fake_classify_task_route(*args, **kwargs):
+        return agent.RoutingDecision(
+            specialist="Orchestrator",
+            reason="Task spans multiple specialist domains.",
+        )
+
+    async def fail_plan_orchestration(*args, **kwargs):
+        raise AssertionError("Existing workflow must not be replanned.")
+
+    async def fail_runner_run(*args, **kwargs):
+        raise AssertionError("Completed workflow stages must not run again.")
+
+    monkeypatch.setattr(agent, "api_key_configured", lambda: True)
+    monkeypatch.setattr(agent, "execution_engine", SimpleNamespace(ready=True))
+    monkeypatch.setattr(agent, "classify_task_route", fake_classify_task_route)
+    monkeypatch.setattr(agent, "plan_orchestration", fail_plan_orchestration)
+    monkeypatch.setattr(agent.Runner, "run", fail_runner_run)
+
+    outcome = asyncio.run(agent.run_orchestrator(task, "gpt-5.6", store))
+
+    children = store.list_workflow_tasks(str(task["id"]))
+
+    assert len(children) == 2
+    assert [row["status"] for row in children] == ["completed", "completed"]
+    assert outcome.status == "completed"
+    assert outcome.summary == "Developer: Developer completed. | QA: QA completed."
+    assert outcome.evidence == ["developer evidence", "qa evidence"]
+
+def test_run_orchestrator_resumes_blocked_stage_and_continues_existing_workflow(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = make_store(tmp_path)
+    store.seed_defaults()
+    task = store.create_task(
+        title="Resume blocked orchestration",
+        description="Implement, review, and verify the requested change.",
+        agent_name="Orchestrator",
+        priority="High",
+        side_effect_level="none",
+        requires_approval=False,
+    )
+
+    developer = store.create_task(
+        title="Stage 1: Developer",
+        description="Implement the requested change.",
+        agent_name="Developer",
+        priority="High",
+        parent_task_id=str(task["id"]),
+        workflow_id=str(task["id"]),
+        stage_index=1,
+        workflow_managed=True,
+    )
+    reviewer = store.create_task(
+        title="Stage 2: CodeReviewer",
+        description="Review the implementation.",
+        agent_name="CodeReviewer",
+        priority="High",
+        parent_task_id=str(task["id"]),
+        workflow_id=str(task["id"]),
+        stage_index=2,
+        workflow_managed=True,
+    )
+    qa = store.create_task(
+        title="Stage 3: QA",
+        description="Verify the implementation.",
+        agent_name="QA",
+        priority="High",
+        parent_task_id=str(task["id"]),
+        workflow_id=str(task["id"]),
+        stage_index=3,
+        workflow_managed=True,
+    )
+
+    store.start_workflow_stage(str(developer["id"]))
+    store.finish_workflow_stage(
+        str(developer["id"]),
+        status="completed",
+        result={
+            "summary": "Developer completed.",
+            "evidence": ["developer evidence"],
+        },
+    )
+
+    store.start_workflow_stage(str(reviewer["id"]))
+    store.finish_workflow_stage(
+        str(reviewer["id"]),
+        status="blocked",
+        result={
+            "summary": "Exact approval is required.",
+            "evidence": ["approval missing"],
+        },
+    )
+
+    approval = store.ensure_approval(str(task["id"]))
+    store.decide_approval(str(approval["id"]), "approved")
+    task = store.get_task(str(task["id"]))
+    assert task is not None
+    assert task["status"] == "queued"
+    assert task["approval_id"] == approval["id"]
+
+    async def fake_classify_task_route(*args, **kwargs):
+        return agent.RoutingDecision(
+            specialist="Orchestrator",
+            reason="Task spans multiple specialist domains.",
+        )
+
+    async def fail_plan_orchestration(*args, **kwargs):
+        raise AssertionError("Existing workflow must not be replanned.")
+
+    calls: list[tuple[str, str]] = []
+
+    class FakeSpecialist:
+        def __init__(self, name: str):
+            self.name = name
+
+    def fake_build_specialist(
+        specialist_name: str,
+        model: str,
+        store_arg: TaskStore,
+        task_id: str,
+    ):
+        assert task_id == task["id"]
+        return FakeSpecialist(specialist_name)
+
+    async def fake_runner_run(specialist, prompt, **kwargs):
+        calls.append((specialist.name, prompt))
+        return SimpleNamespace(
+            final_output=agent.SpecialistOutcome(
+                status="completed",
+                summary=f"{specialist.name} completed.",
+                evidence=[f"{specialist.name} evidence"],
+            )
+        )
+
+    monkeypatch.setattr(agent, "api_key_configured", lambda: True)
+    monkeypatch.setattr(agent, "execution_engine", SimpleNamespace(ready=True))
+    monkeypatch.setattr(agent, "classify_task_route", fake_classify_task_route)
+    monkeypatch.setattr(agent, "plan_orchestration", fail_plan_orchestration)
+    monkeypatch.setattr(agent, "build_specialist", fake_build_specialist)
+    monkeypatch.setattr(agent.Runner, "run", fake_runner_run)
+
+    outcome = asyncio.run(agent.run_orchestrator(task, "gpt-5.6", store))
+
+    children = store.list_workflow_tasks(str(task["id"]))
+
+    assert len(children) == 3
+    assert [row["status"] for row in children] == [
+        "completed",
+        "completed",
+        "completed",
+    ]
+    assert [name for name, _prompt in calls] == ["CodeReviewer", "QA"]
+    assert "Developer: Developer completed." in calls[0][1]
+    assert outcome.status == "completed"
+    assert outcome.evidence == [
+        "developer evidence",
+        "CodeReviewer evidence",
+        "QA evidence",
+    ]
+
+def test_run_orchestrator_does_not_resume_blocked_stage_with_other_tasks_approval(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = make_store(tmp_path)
+    store.seed_defaults()
+
+    task = store.create_task(
+        title="Blocked orchestration",
+        description="Resume only with this task's own approval.",
+        agent_name="Orchestrator",
+        priority="High",
+        side_effect_level="none",
+        requires_approval=False,
+    )
+
+    child = store.create_task(
+        title="Stage 1: CodeReviewer",
+        description="Review the implementation.",
+        agent_name="CodeReviewer",
+        priority="High",
+        parent_task_id=str(task["id"]),
+        workflow_id=str(task["id"]),
+        stage_index=1,
+        workflow_managed=True,
+    )
+
+    store.start_workflow_stage(str(child["id"]))
+    store.finish_workflow_stage(
+        str(child["id"]),
+        status="blocked",
+        result={
+            "summary": "Exact approval is required.",
+            "evidence": ["approval missing"],
+        },
+    )
+
+    other_task = store.create_task(
+        title="Other task",
+        description="Unrelated approved task.",
+        agent_name="Developer",
+        priority="High",
+    )
+    other_approval = store.ensure_approval(str(other_task["id"]))
+    store.decide_approval(str(other_approval["id"]), "approved")
+
+    with store._connect() as db:
+        db.execute(
+            "UPDATE tasks SET approval_id=? WHERE id=?",
+            (str(other_approval["id"]), str(task["id"])),
+        )
+
+    task = store.get_task(str(task["id"]))
+    assert task is not None
+
+    async def fake_classify_task_route(*args, **kwargs):
+        return agent.RoutingDecision(
+            specialist="Orchestrator",
+            reason="Task spans multiple specialist domains.",
+        )
+
+    async def fail_plan_orchestration(*args, **kwargs):
+        raise AssertionError("Existing workflow must not be replanned.")
+
+    async def fail_runner_run(*args, **kwargs):
+        raise AssertionError("Blocked stage must not run with another task's approval.")
+
+    monkeypatch.setattr(agent, "api_key_configured", lambda: True)
+    monkeypatch.setattr(agent, "execution_engine", SimpleNamespace(ready=True))
+    monkeypatch.setattr(agent, "classify_task_route", fake_classify_task_route)
+    monkeypatch.setattr(agent, "plan_orchestration", fail_plan_orchestration)
+    monkeypatch.setattr(agent.Runner, "run", fail_runner_run)
+
+    outcome = asyncio.run(agent.run_orchestrator(task, "gpt-5.6", store))
+
+    persisted = store.get_task(str(child["id"]))
+    assert persisted is not None
+    assert persisted["status"] == "blocked"
+    assert outcome.status == "blocked"
+    assert outcome.summary == "Exact approval is required."
+    assert outcome.evidence == ["approval missing"]

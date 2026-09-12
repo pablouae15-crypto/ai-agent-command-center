@@ -106,3 +106,97 @@ def test_archive_task_api_returns_404_for_missing_task(monkeypatch, tmp_path: Pa
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Task not found."
+
+def test_workflow_endpoint_returns_parent_and_ordered_stages(monkeypatch, tmp_path: Path) -> None:
+    test_store = make_store(tmp_path)
+    monkeypatch.setattr(main, "store", test_store)
+
+    parent = test_store.create_task(
+        title="Parent workflow task",
+        description="Parent task for workflow visibility.",
+        agent_name="Orchestrator",
+        priority="High",
+    )
+    second_stage = test_store.create_task(
+        title="Stage 2: QA",
+        description="Verify the implementation.",
+        agent_name="QA",
+        priority="High",
+        parent_task_id=str(parent["id"]),
+        workflow_id=str(parent["id"]),
+        stage_index=2,
+        workflow_managed=True,
+    )
+    first_stage = test_store.create_task(
+        title="Stage 1: Developer",
+        description="Implement the change.",
+        agent_name="Developer",
+        priority="High",
+        parent_task_id=str(parent["id"]),
+        workflow_id=str(parent["id"]),
+        stage_index=1,
+        workflow_managed=True,
+    )
+    test_store.create_task(
+        title="Unrelated workflow stage",
+        description="This stage belongs to another workflow.",
+        agent_name="Developer",
+        priority="Medium",
+        workflow_id="other-workflow",
+        stage_index=1,
+        workflow_managed=True,
+    )
+
+    with TestClient(main.app) as client:
+        response = client.get(f"/api/tasks/{parent['id']}/workflow")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["task"]["id"] == parent["id"]
+    assert [stage["id"] for stage in body["stages"]] == [
+        first_stage["id"],
+        second_stage["id"],
+    ]
+    assert [stage["stage_index"] for stage in body["stages"]] == [1, 2]
+    assert all(stage["workflow_id"] == parent["id"] for stage in body["stages"])
+
+
+def test_workflow_endpoint_returns_404_for_missing_task(monkeypatch, tmp_path: Path) -> None:
+    test_store = make_store(tmp_path)
+    monkeypatch.setattr(main, "store", test_store)
+
+    with TestClient(main.app) as client:
+        response = client.get("/api/tasks/missing-task/workflow")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Task not found."
+
+
+def test_tasks_endpoint_excludes_workflow_managed_children(monkeypatch, tmp_path: Path) -> None:
+    test_store = make_store(tmp_path)
+    monkeypatch.setattr(main, "store", test_store)
+
+    parent = test_store.create_task(
+        title="Visible parent task",
+        description="Top-level workflow parent.",
+        agent_name="Orchestrator",
+        priority="High",
+    )
+    child = test_store.create_task(
+        title="Stage 1: Developer",
+        description="Workflow child should not appear as a top-level task.",
+        agent_name="Developer",
+        priority="High",
+        parent_task_id=str(parent["id"]),
+        workflow_id=str(parent["id"]),
+        stage_index=1,
+        workflow_managed=True,
+    )
+
+    with TestClient(main.app) as client:
+        response = client.get("/api/tasks")
+
+    assert response.status_code == 200
+    task_ids = {task["id"] for task in response.json()}
+    assert parent["id"] in task_ids
+    assert child["id"] not in task_ids

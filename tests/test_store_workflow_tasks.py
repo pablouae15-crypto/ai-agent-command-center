@@ -269,3 +269,114 @@ def test_workflow_stage_transition_rejects_normal_queue_task(
 
     with pytest.raises(PermissionError, match="workflow-managed"):
         store.start_workflow_stage(str(ordinary["id"]))
+
+def test_resume_workflow_stage_restarts_blocked_stage_without_changing_agent_status(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+    store.seed_defaults()
+
+    parent = store.create_task(
+        title="Parent workflow",
+        description="Parent workflow task.",
+        agent_name="Orchestrator",
+        priority="High",
+    )
+    child = store.create_task(
+        title="Stage 1: Developer",
+        description="Resume this blocked stage.",
+        agent_name="Developer",
+        priority="High",
+        parent_task_id=str(parent["id"]),
+        workflow_id=str(parent["id"]),
+        stage_index=1,
+        workflow_managed=True,
+    )
+
+    store.start_workflow_stage(str(child["id"]))
+    store.finish_workflow_stage(
+        str(child["id"]),
+        status="blocked",
+        result={
+            "summary": "Exact approval is required.",
+            "evidence": ["approval missing"],
+        },
+    )
+
+    with store._connect() as db:
+        db.execute(
+            "UPDATE agent_status SET status='working', current_task_id=? "
+            "WHERE name='Developer'",
+            ("other-developer-task",),
+        )
+
+    resumed = store.resume_workflow_stage(str(child["id"]))
+
+    assert resumed["status"] == "running"
+    assert resumed["completed_at"] is None
+    assert resumed["error"] is None
+
+    with store._connect() as db:
+        developer = db.execute(
+            "SELECT status, current_task_id FROM agent_status WHERE name='Developer'"
+        ).fetchone()
+
+    assert developer is not None
+    assert developer["status"] == "working"
+    assert developer["current_task_id"] == "other-developer-task"
+
+def test_resume_workflow_stage_rejects_normal_queue_task(
+    tmp_path: Path,
+) -> None:
+    import pytest
+
+    store = make_store(tmp_path)
+
+    ordinary = store.create_task(
+        title="Ordinary task",
+        description="Normal queue-managed task.",
+        agent_name="Developer",
+    )
+
+    with pytest.raises(PermissionError, match="workflow-managed"):
+        store.resume_workflow_stage(str(ordinary["id"]))
+
+
+def test_resume_workflow_stage_rejects_non_blocked_workflow_stage(
+    tmp_path: Path,
+) -> None:
+    import pytest
+
+    store = make_store(tmp_path)
+
+    parent = store.create_task(
+        title="Parent workflow",
+        description="Parent workflow task.",
+        agent_name="Orchestrator",
+    )
+
+    child = store.create_task(
+        title="Stage 1: Developer",
+        description="Do not retry failed work automatically.",
+        agent_name="Developer",
+        parent_task_id=str(parent["id"]),
+        workflow_id=str(parent["id"]),
+        stage_index=1,
+        workflow_managed=True,
+    )
+
+    store.start_workflow_stage(str(child["id"]))
+    store.finish_workflow_stage(
+        str(child["id"]),
+        status="failed",
+        result={
+            "summary": "Implementation failed.",
+            "evidence": ["verification failed"],
+        },
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Only a blocked workflow stage can be resumed",
+    ):
+        store.resume_workflow_stage(str(child["id"]))

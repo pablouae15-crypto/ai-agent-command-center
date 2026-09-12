@@ -118,3 +118,37 @@ def test_summary_endpoint_surfaces_attention_tasks_outside_priority_limit(monkey
     summary = response.json()
     assert summary["task_counts"]["failed"] == 1
     assert any(task["id"] == failed["id"] for task in summary["tasks"])
+
+
+def test_summary_excludes_workflow_children_from_top_level_counts_and_visibility(monkeypatch, tmp_path: Path) -> None:
+    test_store = make_store(tmp_path)
+    monkeypatch.setattr(main, "store", test_store)
+
+    parent = test_store.create_task(
+        title="Workflow parent",
+        description="Top-level task counted by the dashboard.",
+        agent_name="Orchestrator",
+        priority="High",
+    )
+    child = test_store.create_task(
+        title="Stage 1: Developer",
+        description="Persisted workflow child should not inflate dashboard counts.",
+        agent_name="Developer",
+        priority="Critical",
+        parent_task_id=str(parent["id"]),
+        workflow_id=str(parent["id"]),
+        stage_index=1,
+        workflow_managed=True,
+    )
+
+    with TestClient(main.app) as client:
+        response = client.get("/api/summary")
+
+    assert response.status_code == 200
+    summary = response.json()
+    assert summary["task_counts"]["queued"] == 1
+    assert summary["priority_counts"]["High"] == 1
+    assert "Critical" not in summary["priority_counts"]
+    visible_ids = {task["id"] for task in summary["tasks"]}
+    assert parent["id"] in visible_ids
+    assert child["id"] not in visible_ids

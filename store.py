@@ -282,9 +282,23 @@ class TaskStore:
         with self._connect() as db:
             return self._row(db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone())
 
+    def list_workflow_tasks(self, workflow_id: str) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT * FROM tasks
+                   WHERE workflow_id=? AND workflow_managed=1
+                   ORDER BY stage_index ASC, created_at ASC""",
+                (workflow_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
     def list_tasks(self, limit: int = 100, include_archived: bool = False) -> list[dict[str, Any]]:
         with self._connect() as db:
-            where_clause = "" if include_archived else "WHERE archived_at IS NULL"
+            where_clause = (
+                "WHERE workflow_managed=0"
+                if include_archived
+                else "WHERE archived_at IS NULL AND workflow_managed=0"
+            )
             rows = db.execute(
                 f"SELECT * FROM tasks {where_clause} "
                 "ORDER BY CASE priority WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Medium' THEN 3 ELSE 4 END, created_at DESC LIMIT ?",
@@ -298,18 +312,19 @@ class TaskStore:
                 row["status"]: row["count"]
                 for row in db.execute(
                     "SELECT status, COUNT(*) AS count FROM tasks "
-                    "WHERE archived_at IS NULL GROUP BY status"
+                    "WHERE archived_at IS NULL AND workflow_managed=0 GROUP BY status"
                 )
             }
             priority_counts = {
                 row["priority"]: row["count"]
                 for row in db.execute(
                     "SELECT priority, COUNT(*) AS count FROM tasks "
-                    "WHERE archived_at IS NULL GROUP BY priority"
+                    "WHERE archived_at IS NULL AND workflow_managed=0 GROUP BY priority"
                 )
             }
             archived_count = db.execute(
-                "SELECT COUNT(*) AS count FROM tasks WHERE archived_at IS NOT NULL"
+                "SELECT COUNT(*) AS count FROM tasks "
+                "WHERE archived_at IS NOT NULL AND workflow_managed=0"
             ).fetchone()["count"]
             pending = db.execute(
                 "SELECT COUNT(*) AS count FROM approvals WHERE status='pending'"
@@ -427,6 +442,51 @@ class TaskStore:
         updated = self.get_task(task_id)
         if updated is None:
             raise RuntimeError("Workflow stage disappeared after start.")
+        return updated
+
+    def resume_workflow_stage(self, task_id: str) -> dict[str, Any]:
+        now = utc_now()
+
+        with self._lock, self._connect() as db:
+            task = db.execute(
+                "SELECT * FROM tasks WHERE id=?",
+                (task_id,),
+            ).fetchone()
+
+            if not task:
+                raise ValueError("task not found")
+
+            if not task["workflow_managed"]:
+                raise PermissionError(
+                    "Workflow stage transitions require a workflow-managed task."
+                )
+
+            if task["status"] != "blocked":
+                raise ValueError(
+                    "Only a blocked workflow stage can be resumed."
+                )
+
+            db.execute(
+                "UPDATE tasks SET status='running', updated_at=?, "
+                "completed_at=NULL, error=NULL WHERE id=?",
+                (now, task_id),
+            )
+
+        self.add_activity(
+            "workflow.stage_resumed",
+            f"Workflow stage resumed: {task['title']}",
+            task_id=task_id,
+            agent_name=task["agent_name"],
+            payload={
+                "workflow_id": task["workflow_id"],
+                "parent_task_id": task["parent_task_id"],
+                "stage_index": task["stage_index"],
+            },
+        )
+
+        updated = self.get_task(task_id)
+        if updated is None:
+            raise RuntimeError("Workflow stage disappeared after resume.")
         return updated
 
     def finish_workflow_stage(
