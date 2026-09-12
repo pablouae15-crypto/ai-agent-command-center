@@ -1,0 +1,45 @@
+name: Pytest
+
+on:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    # The suite uses the separate local execution engine and sandbox on D:.
+    # Keep this off pull_request events because self-hosted runners are trusted
+    # machines and must not execute untrusted fork code.
+    runs-on: [self-hosted, Windows, X64]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Verify local test dependencies
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'D:\Shared-Local-Execution-Engine\engine')) {
+            throw 'D:\Shared-Local-Execution-Engine is required by the test suite.'
+          }
+          if (-not (Test-Path 'D:\Shared-Local-Execution-Engine-Sandbox')) {
+            throw 'D:\Shared-Local-Execution-Engine-Sandbox is required by the test suite.'
+          }
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project and test dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pytest
+
+      - name: Run pytest
+        shell: pwsh
+        run: python -m pytest -q
