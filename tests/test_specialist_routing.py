@@ -1472,3 +1472,126 @@ def test_run_orchestrator_does_not_resume_blocked_stage_with_other_tasks_approva
     assert outcome.status == "blocked"
     assert outcome.summary == "Exact approval is required."
     assert outcome.evidence == ["approval missing"]
+
+def test_run_orchestrator_blocked_edit_proposal_creates_exact_parent_approval(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import json
+
+    store = make_store(tmp_path)
+    store.seed_defaults()
+
+    task = store.create_task(
+        title="Autonomous sandbox fix",
+        description="Review the sandbox project, find a real problem, fix it, test it, and give me the result.",
+        agent_name="Orchestrator",
+        priority="High",
+        side_effect_level="none",
+        requires_approval=False,
+    )
+
+    async def fake_classify_task_route(*args, **kwargs):
+        return agent.RoutingDecision(
+            specialist="Orchestrator",
+            reason="Task requires inspection, implementation, review, and verification.",
+        )
+
+    async def fake_plan_orchestration(*args, **kwargs):
+        return agent.OrchestrationPlan(
+            reason="Inspect and fix the sandbox project.",
+            stages=[
+                agent.OrchestrationStage(
+                    specialist="Developer",
+                    instruction="Inspect the sandbox and identify one concrete fix.",
+                ),
+            ],
+        )
+
+    class FakeSpecialist:
+        name = "Developer"
+
+    def fake_build_specialist(*args, **kwargs):
+        return FakeSpecialist()
+
+    async def fake_runner_run(*args, **kwargs):
+        return SimpleNamespace(
+            final_output=agent.SpecialistOutcome(
+                status="blocked",
+                summary="A concrete sandbox edit is ready for exact human approval.",
+                evidence=["Inspected app.py and identified the exact replacement."],
+                exact_edit_proposal=agent.ExactEditProposal(
+                    capability="replace_text",
+                    path=r"D:\Shared-Local-Execution-Engine-Sandbox\app.py",
+                    old_text="return (a + b)",
+                    new_text="return a + b",
+                    expected_replacements=1,
+                ),
+            )
+        )
+
+    monkeypatch.setattr(agent, "api_key_configured", lambda: True)
+    monkeypatch.setattr(agent, "execution_engine", SimpleNamespace(ready=True))
+    monkeypatch.setattr(agent, "classify_task_route", fake_classify_task_route)
+    monkeypatch.setattr(agent, "plan_orchestration", fake_plan_orchestration)
+    monkeypatch.setattr(agent, "build_specialist", fake_build_specialist)
+    monkeypatch.setattr(agent.Runner, "run", fake_runner_run)
+
+    outcome = asyncio.run(agent.run_orchestrator(task, "gpt-5.6", store))
+
+    assert outcome.status == "blocked"
+    assert outcome.exact_edit_proposal is not None
+
+    children = store.list_workflow_tasks(str(task["id"]))
+    assert len(children) == 1
+    assert children[0]["status"] == "blocked"
+
+    persisted_result = json.loads(children[0]["result_json"])
+    assert persisted_result["exact_edit_proposal"] == {
+        "capability": "replace_text",
+        "path": r"D:\Shared-Local-Execution-Engine-Sandbox\app.py",
+        "old_text": "return (a + b)",
+        "new_text": "return a + b",
+        "expected_replacements": 1,
+    }
+
+    refreshed = store.get_task(str(task["id"]))
+    assert refreshed is not None
+    assert refreshed["status"] == "awaiting_approval"
+    assert refreshed["approval_id"]
+
+    approval = store.get_approval(str(refreshed["approval_id"]))
+    assert approval is not None
+    assert approval["task_id"] == task["id"]
+    assert approval["status"] == "pending"
+
+    payload = json.loads(approval["display_payload_json"])
+    assert payload == {
+        "type": "verified_edit_execution",
+        "capability": "replace_text",
+        "path": r"D:\Shared-Local-Execution-Engine-Sandbox\app.py",
+        "repository_path": r"D:\Shared-Local-Execution-Engine-Sandbox",
+        "verification_profile": "sandbox_pytest",
+        "old_text": "return (a + b)",
+        "new_text": "return a + b",
+        "expected_replacements": 1,
+    }
+
+def test_developer_instructions_require_exact_edit_proposal_before_unapproved_write(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+
+    developer = build_specialist(
+        "Developer",
+        "gpt-5.6",
+        store,
+        "task-developer-exact-proposal",
+    )
+
+    instructions = developer.instructions
+
+    assert "exact_edit_proposal" in instructions
+    assert "status='blocked'" in instructions
+    assert "Do not execute the write" in instructions
+    assert "exact human approval" in instructions

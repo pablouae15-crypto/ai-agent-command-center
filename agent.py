@@ -27,6 +27,14 @@ from write_approval import (
 )
 
 
+class ExactEditProposal(BaseModel):
+    capability: Literal["replace_text"]
+    path: str
+    old_text: str
+    new_text: str
+    expected_replacements: int = 1
+
+
 class SpecialistOutcome(BaseModel):
     status: Literal[
         "completed",
@@ -45,6 +53,7 @@ class SpecialistOutcome(BaseModel):
     )
     summary: str
     evidence: list[str]
+    exact_edit_proposal: ExactEditProposal | None = None
 
 
 class RoutingDecision(BaseModel):
@@ -866,6 +875,10 @@ SPECIALIST_INSTRUCTIONS = {
     "Developer": (
         "Act as the Developer specialist. Focus on implementation, debugging, refactoring, "
         "small controlled code changes, and evidence-based verification. "
+        "When inspection identifies a concrete sandbox write that is required but no exact approved "
+        "write is available, return status='blocked' and include a precise exact_edit_proposal with "
+        "capability, path, old_text, new_text, and expected_replacements. Do not execute the write "
+        "before exact human approval is granted. "
         "Do not broaden scope beyond the assigned task."
     ),
     "QA": (
@@ -1282,14 +1295,41 @@ async def run_orchestrator(
                 )
                 raise
 
+            persisted_stage_result = {
+                "summary": output.summary,
+                "evidence": output.evidence,
+            }
+
+            if output.exact_edit_proposal is not None:
+                persisted_stage_result["exact_edit_proposal"] = (
+                    output.exact_edit_proposal.model_dump()
+                )
+
             store.finish_workflow_stage(
                 str(workflow_stage_task["id"]),
                 status=output.status,
-                result={
-                    "summary": output.summary,
-                    "evidence": output.evidence,
-                },
+                result=persisted_stage_result,
             )
+
+            if (
+                output.status == "blocked"
+                and output.exact_edit_proposal is not None
+            ):
+                proposal = output.exact_edit_proposal
+                _require_sandbox_path(proposal.path)
+                store.create_exact_approval(
+                    VerifiedEditRequest(
+                        task_id=str(task["id"]),
+                        capability=proposal.capability,
+                        path=proposal.path,
+                        repository_path=r"D:\Shared-Local-Execution-Engine-Sandbox",
+                        verification_profile="sandbox_pytest",
+                        old_text=proposal.old_text,
+                        new_text=proposal.new_text,
+                        expected_replacements=proposal.expected_replacements,
+                    ),
+                    reason="Execute this exact verified edit",
+                )
 
             stage_outcomes.append(output)
             prior_context.append(

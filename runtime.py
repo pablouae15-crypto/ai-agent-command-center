@@ -356,6 +356,52 @@ class Runtime:
                                     ],
                                 }
 
+                                workflow_tasks = self.store.list_workflow_tasks(
+                                    str(task["id"])
+                                )
+                                matching_blocked_stage = None
+
+                                for workflow_task in workflow_tasks:
+                                    if workflow_task["status"] != "blocked":
+                                        continue
+
+                                    saved_result = json.loads(
+                                        workflow_task["result_json"] or "{}"
+                                    )
+                                    proposal = saved_result.get("exact_edit_proposal") or {}
+
+                                    if (
+                                        proposal.get("capability") == preview.get("capability")
+                                        and proposal.get("path") == preview.get("path")
+                                        and proposal.get("old_text") == preview.get("old_text")
+                                        and proposal.get("new_text") == preview.get("new_text")
+                                        and int(proposal.get("expected_replacements", 1))
+                                        == int(preview.get("expected_replacements", 1))
+                                    ):
+                                        matching_blocked_stage = workflow_task
+                                        break
+
+                                if matching_blocked_stage is not None:
+                                    self.store.resume_workflow_stage(
+                                        str(matching_blocked_stage["id"])
+                                    )
+                                    self.store.finish_workflow_stage(
+                                        str(matching_blocked_stage["id"]),
+                                        status="completed",
+                                        result={
+                                            "summary": output["summary"],
+                                            "evidence": output["evidence"],
+                                        },
+                                    )
+                                    self.store.requeue_running_task(
+                                        str(task["id"]),
+                                        reason=(
+                                            "Verified edit completed; resume persisted "
+                                            "orchestration workflow."
+                                        ),
+                                    )
+                                    continue
+
                         else:
                             output = await run_specialist(
                                 task,

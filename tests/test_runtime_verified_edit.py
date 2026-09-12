@@ -423,3 +423,187 @@ def test_runtime_promotes_approved_generic_edit_to_exact_approval(
 
     assert old_generic is not None
     assert old_generic["status"] == "superseded"
+
+def test_approved_verified_edit_completes_blocked_stage_and_resumes_parent_orchestration(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import json
+
+    store = TaskStore(
+        db_path=tmp_path / "runtime-workflow-verified-edit.db",
+        audit_log_path=tmp_path / "audit.jsonl",
+    )
+    store.seed_defaults()
+
+    task = store.create_task(
+        title="Autonomous sandbox fix",
+        description="Review the sandbox project, find a real problem, fix it, test it, and give me the result.",
+        agent_name="Orchestrator",
+        priority="High",
+        side_effect_level="none",
+        requires_approval=False,
+    )
+
+    child = store.create_task(
+        title="Stage 1: Developer",
+        description="Inspect the sandbox and identify one concrete fix.",
+        agent_name="Developer",
+        priority="High",
+        parent_task_id=str(task["id"]),
+        workflow_id=str(task["id"]),
+        stage_index=1,
+        workflow_managed=True,
+    )
+
+    store.start_workflow_stage(str(child["id"]))
+    store.finish_workflow_stage(
+        str(child["id"]),
+        status="blocked",
+        result={
+            "summary": "A concrete sandbox edit is ready for exact human approval.",
+            "evidence": ["Inspected app.py and identified the exact replacement."],
+            "exact_edit_proposal": {
+                "capability": "replace_text",
+                "path": r"D:\Shared-Local-Execution-Engine-Sandbox\app.py",
+                "old_text": "return (a + b)",
+                "new_text": "return a + b",
+                "expected_replacements": 1,
+            },
+        },
+    )
+
+    request = VerifiedEditRequest(
+        task_id=str(task["id"]),
+        capability="replace_text",
+        path=r"D:\Shared-Local-Execution-Engine-Sandbox\app.py",
+        repository_path=r"D:\Shared-Local-Execution-Engine-Sandbox",
+        verification_profile="sandbox_pytest",
+        old_text="return (a + b)",
+        new_text="return a + b",
+        expected_replacements=1,
+    )
+
+    pending = store.create_exact_approval(
+        request,
+        reason="Execute this exact verified edit",
+    )
+    store.decide_approval(
+        str(pending["id"]),
+        "approved",
+        decided_by="runtime-test-user",
+    )
+
+    calls = []
+
+    def fake_execute_approved_verified_edit(
+        *,
+        store,
+        task_id,
+        approval_id,
+        path,
+        repository_path,
+        old_text,
+        new_text,
+        expected_replacements,
+    ):
+        calls.append(
+            {
+                "task_id": task_id,
+                "approval_id": approval_id,
+                "path": path,
+                "repository_path": repository_path,
+                "old_text": old_text,
+                "new_text": new_text,
+                "expected_replacements": expected_replacements,
+            }
+        )
+        return "verified-edit-success"
+
+    monkeypatch.setattr(
+        runtime_module,
+        "execute_approved_verified_edit",
+        fake_execute_approved_verified_edit,
+    )
+
+    specialist_calls = []
+
+    async def fake_run_specialist(task_arg, model, store_arg):
+        specialist_calls.append(
+            {
+                "task_id": str(task_arg["id"]),
+                "approval_id": task_arg.get("approval_id"),
+            }
+        )
+        return runtime_module.SpecialistOutcome(
+            status="completed",
+            summary="Persisted orchestration workflow resumed successfully.",
+            evidence=["post-edit workflow continuation ran"],
+        )
+
+    monkeypatch.setattr(
+        runtime_module,
+        "run_specialist",
+        fake_run_specialist,
+    )
+
+
+    settings = SimpleNamespace(
+        enable_agent_runs=True,
+        worker_poll_seconds=0.01,
+        scheduler_poll_seconds=3600,
+        openai_model="unused",
+    )
+
+    runtime = Runtime(store, settings)
+
+    async def run_worker():
+        worker = asyncio.create_task(runtime._worker_loop())
+
+        for _ in range(100):
+            refreshed_child = store.get_task(str(child["id"]))
+            refreshed_parent = store.get_task(str(task["id"]))
+
+            if (
+                refreshed_child is not None
+                and refreshed_child["status"] == "completed"
+                and refreshed_parent is not None
+                and refreshed_parent["status"] == "completed"
+            ):
+                break
+
+            await asyncio.sleep(0.01)
+
+        runtime._stop.set()
+
+        try:
+            await asyncio.wait_for(worker, timeout=1)
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(run_worker())
+
+    refreshed_child = store.get_task(str(child["id"]))
+    refreshed_parent = store.get_task(str(task["id"]))
+
+    assert refreshed_child is not None
+    assert refreshed_child["status"] == "completed"
+
+    child_result = json.loads(refreshed_child["result_json"])
+    assert child_result == {
+        "summary": "Verified edit applied successfully and sandbox_pytest verification passed.",
+        "evidence": [
+            r"File: D:\Shared-Local-Execution-Engine-Sandbox\app.py",
+            "Exact approved replace_text operation completed successfully.",
+            "Verification profile: sandbox_pytest",
+        ],
+    }
+
+    assert refreshed_parent is not None
+    assert refreshed_parent["status"] == "completed"
+    assert len(specialist_calls) == 1
+    assert specialist_calls[0]["task_id"] == str(task["id"])
+    assert specialist_calls[0]["approval_id"] is None
+    assert len(calls) == 1
+    assert calls[0]["task_id"] == str(task["id"])
+    assert calls[0]["approval_id"] == str(pending["id"])

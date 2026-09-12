@@ -559,6 +559,47 @@ class TaskStore:
             raise RuntimeError("Workflow stage disappeared after finish.")
         return updated
 
+    def requeue_running_task(self, task_id: str, reason: str) -> dict[str, Any]:
+        now = utc_now()
+        task = self.get_task(task_id)
+
+        if task is None:
+            raise ValueError("task not found")
+
+        if task["workflow_managed"]:
+            raise PermissionError(
+                "Workflow-managed tasks must use workflow stage transitions."
+            )
+
+        if task["status"] != "running":
+            raise ValueError("Only a running task can be requeued.")
+
+        with self._lock, self._connect() as db:
+            db.execute(
+                "UPDATE tasks SET status='queued', updated_at=?, completed_at=NULL, "
+                "error=NULL, approval_id=NULL WHERE id=?",
+                (now, task_id),
+            )
+            db.execute(
+                "UPDATE agent_status SET status='idle', current_task_id=NULL, "
+                "last_seen_at=? WHERE name=?",
+                (now, task["agent_name"]),
+            )
+
+        self.add_activity(
+            "task.requeued",
+            f"Task requeued: {task['title']}",
+            task_id=task_id,
+            agent_name=task["agent_name"],
+            payload={"reason": reason[:500]},
+        )
+
+        updated = self.get_task(task_id)
+        if updated is None:
+            raise RuntimeError("Task disappeared after requeue.")
+        return updated
+
+
     def complete_task(self, task_id: str, result: Any) -> None:
         now = utc_now()
         task = self.get_task(task_id)
@@ -952,7 +993,7 @@ class TaskStore:
             raise ValueError("decision must be approved or rejected")
 
         now = utc_now()
-        terminal_statuses = {"completed", "failed", "blocked", "partial"}
+        terminal_statuses = {"completed", "failed", "partial"}
 
         with self._lock, self._connect() as db:
             approval = db.execute(
@@ -974,7 +1015,25 @@ class TaskStore:
             if not task:
                 raise ValueError("approval task not found")
 
-            if task["status"] in terminal_statuses:
+            try:
+                approval_action = json.loads(str(approval["action"]))
+            except (TypeError, ValueError):
+                approval_action = {}
+
+            blocked_exact_approval = (
+                task["status"] == "blocked"
+                and task["approval_id"] == approval_id
+                and approval_action.get("type")
+                in {"verified_edit", "verified_file_write"}
+            )
+
+            if (
+                task["status"] in terminal_statuses
+                or (
+                    task["status"] == "blocked"
+                    and not blocked_exact_approval
+                )
+            ):
                 db.execute(
                     """
                     UPDATE approvals

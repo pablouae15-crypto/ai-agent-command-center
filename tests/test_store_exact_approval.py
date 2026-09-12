@@ -365,3 +365,30 @@ def test_stale_pending_approval_cannot_revive_completed_task(tmp_path: Path) -> 
     assert refreshed_task["error"] is None
 
     assert decided["status"] == "superseded"
+
+def test_blocked_task_matching_exact_approval_can_be_approved(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    task = make_task(store)
+    request = make_request(str(task["id"]))
+
+    pending = store.create_exact_approval(
+        request,
+        reason="Execute this exact verified edit",
+    )
+    store.block_task(
+        str(task["id"]),
+        "Exact verified edit is waiting for human approval.",
+    )
+
+    decided = store.decide_approval(
+        str(pending["id"]),
+        "approved",
+        decided_by="test-user",
+    )
+    refreshed_task = store.get_task(str(task["id"]))
+
+    assert decided["status"] == "approved"
+    assert refreshed_task is not None
+    assert refreshed_task["status"] == "queued"
+    assert refreshed_task["approval_id"] == pending["id"]
+    assert refreshed_task["error"] is None
