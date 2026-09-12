@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -15,6 +14,7 @@ from config import settings
 from runtime import Runtime
 from store import TaskStore
 from personal_assistant import PersonalAssistantRequest, handoff_to_command_center
+from risk import classify_task_side_effect, should_defer_exact_approval
 from write_approval import VerifiedGmailDraftRequest
 from execution_adapter import ExecutionEngineAdapter
 
@@ -63,143 +63,6 @@ class TaskCreate(BaseModel):
     priority: Literal["Critical", "High", "Medium", "Low"] = "Medium"
     side_effect_level: Literal["none", "external", "destructive"] = "none"
     requires_approval: bool = False
-
-
-def classify_task_side_effect(
-    title: str,
-    description: str,
-    explicit_level: str = "none",
-) -> str:
-    """Conservatively classify obvious task side effects before execution."""
-    if explicit_level in {"external", "destructive"}:
-        return explicit_level
-
-    content = f"{title}\n{description}".lower()
-
-    # Ignore explicitly negated mutation phrases so genuinely read-only
-    # inspection requests are not incorrectly classified as side-effecting.
-    actionable_content = content
-    for phrase in (
-        "do not modify",
-        "do not edit",
-        "do not write",
-        "do not overwrite",
-        "do not replace",
-        "do not rename",
-        "do not move",
-        "do not delete",
-        "do not remove",
-        "do not erase",
-        "do not run command",
-        "do not call external service",
-        "do not send email",
-        "do not send the email",
-        "without modifying",
-        "without editing",
-        "without changing",
-        "without running commands",
-        "without calling external services",
-        "no changes",
-    ):
-        actionable_content = actionable_content.replace(phrase, "")
-
-    destructive_actions = (
-        "delete ",
-        "remove ",
-        "erase ",
-        "drop ",
-        "destroy ",
-    )
-
-    external_actions = (
-        "replace ",
-        "modify ",
-        "edit ",
-        "write ",
-        "overwrite ",
-        "rename ",
-        "move ",
-        "create file",
-        "save file",
-        "send email",
-        "send the email",
-        "modify calendar",
-        "create calendar",
-        "delete calendar",
-        "deploy ",
-        "install ",
-        "uninstall ",
-        "execute command",
-        "run command",
-    )
-
-    def contains_action(text: str, action: str) -> bool:
-        """Match complete action phrases, not larger words such as commands."""
-        normalized_action = action.strip()
-        return re.search(
-            rf"(?<!\w){re.escape(normalized_action)}(?!\w)",
-            text,
-        ) is not None
-
-    file_or_system_target = (
-        "\\" in content
-        or ":\\" in content
-        or ".py" in content
-        or ".js" in content
-        or ".ts" in content
-        or ".html" in content
-        or ".css" in content
-        or ".json" in content
-        or ".sql" in content
-        or ".yaml" in content
-        or ".yml" in content
-        or " file" in content
-        or "repository" in content
-        or "database" in content
-    )
-
-    if file_or_system_target and any(
-        contains_action(actionable_content, action)
-        for action in destructive_actions
-    ):
-        return "destructive"
-
-    if file_or_system_target and any(
-        contains_action(actionable_content, action)
-        for action in external_actions
-    ):
-        return "external"
-
-    account_side_effects = (
-        "send email",
-        "send the email",
-        "create calendar",
-        "modify calendar",
-        "delete calendar",
-        "deploy ",
-    )
-
-    if any(
-        contains_action(actionable_content, action)
-        for action in account_side_effects
-    ):
-        return "external"
-
-    return "none"
-
-
-def should_defer_exact_approval(title: str, description: str) -> bool:
-    """Return true when a task should wait for an exact verified approval."""
-    content = f"{title}\n{description}".lower()
-    verified_execution_markers = (
-        "use verified replace text",
-        "verified replace text",
-        "verified_replace_text",
-        "use verified write text file",
-        "verified write text file",
-        "verified_write_text_file",
-    )
-    return any(marker in content for marker in verified_execution_markers)
 
 
 class GmailDraftApprovalRequest(BaseModel):

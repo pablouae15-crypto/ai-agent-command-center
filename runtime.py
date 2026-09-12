@@ -151,6 +151,7 @@ class Runtime:
 
     async def start(self) -> None:
         self._stop.clear()
+        self.store.recover_interrupted_tasks()
         self._tasks = [
             asyncio.create_task(self._scheduler_loop(), name="scheduler"),
             asyncio.create_task(self._worker_loop(), name="worker"),
