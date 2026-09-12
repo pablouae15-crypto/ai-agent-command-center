@@ -3,6 +3,15 @@ from fastapi.testclient import TestClient
 import main
 
 
+def test_read_only_status_request_is_not_classified_as_external() -> None:
+    request = (
+        "Give me a short status summary of the AI Agent Command Center. "
+        "Do not modify files, run commands, or call external services."
+    )
+
+    assert main.classify_task_side_effect("", request) == "none"
+
+
 def test_personal_assistant_handoff_classifies_file_edit_as_external(
     monkeypatch,
 ) -> None:
