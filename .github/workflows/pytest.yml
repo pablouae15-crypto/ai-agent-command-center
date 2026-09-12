@@ -13,6 +13,10 @@ jobs:
     # Keep this off pull_request events because self-hosted runners are trusted
     # machines and must not execute untrusted fork code.
     runs-on: [self-hosted, windows, x64]
+    env:
+      EXECUTION_ENGINE_ENABLED: "true"
+      EXECUTION_ENGINE_WORKSPACE_ROOTS: "D:\\Shared-Local-Execution-Engine-Sandbox"
+      EXECUTION_ENGINE_AUDIT_LOG: "D:\\AI-Agent-Command-Center\\logs\\execution-engine.jsonl"
 
     steps:
       - name: Check out repository
