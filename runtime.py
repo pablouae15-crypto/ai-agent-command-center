@@ -339,6 +339,23 @@ class Runtime:
                                     f"{normalized_output}"
                                 )
 
+                            if preview.get("type") == "verified_edit_execution":
+                                output = {
+                                    "status": "completed",
+                                    "summary": (
+                                        "Verified edit applied successfully and "
+                                        "sandbox_pytest verification passed."
+                                    ),
+                                    "evidence": [
+                                        f"File: {preview.get('path') or 'unknown'}",
+                                        (
+                                            "Exact approved replace_text operation "
+                                            "completed successfully."
+                                        ),
+                                        "Verification profile: sandbox_pytest",
+                                    ],
+                                }
+
                         else:
                             output = await run_specialist(
                                 task,

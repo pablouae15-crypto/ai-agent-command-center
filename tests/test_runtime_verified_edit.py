@@ -145,6 +145,16 @@ def test_approved_verified_edit_runtime_bypasses_llm(
     assert completed is not None
     assert completed["status"] == "completed"
 
+    import json
+
+    persisted = json.loads(completed["result_json"])
+    assert persisted["output"]["status"] == "completed"
+    assert (
+        persisted["output"]["summary"]
+        == "Verified edit applied successfully and sandbox_pytest verification passed."
+    )
+    assert "Verification profile: sandbox_pytest" in persisted["output"]["evidence"]
+
     assert len(calls) == 1
 
     call = calls[0]
