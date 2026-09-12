@@ -59,6 +59,47 @@ def test_personal_assistant_handoff_defers_verified_edit_until_exact_approval(tm
     assert result.requires_approval is False
 
 
+def test_personal_assistant_handoff_defers_approved_replacement_paraphrase(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+
+    result = handoff_to_command_center(
+        store,
+        PersonalAssistantRequest(
+            request="Apply an approved text replacement in the sandbox file.",
+        ),
+    )
+
+    task = store.get_task(result.task_id)
+
+    assert task is not None
+    assert task["status"] == "queued"
+    assert task["approval_id"] is None
+    assert result.requires_approval is False
+
+
+def test_personal_assistant_handoff_keeps_unapproved_edit_on_normal_approval_path(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+
+    result = handoff_to_command_center(
+        store,
+        PersonalAssistantRequest(
+            request="Edit the sandbox file and replace the old text.",
+            side_effect_level="external",
+        ),
+    )
+
+    task = store.get_task(result.task_id)
+
+    assert task is not None
+    assert task["status"] == "awaiting_approval"
+    assert task["approval_id"] is not None
+    assert result.requires_approval is True
+
+
 
 
 

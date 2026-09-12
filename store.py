@@ -400,6 +400,65 @@ class TaskStore:
         self.add_activity("task.started", f"Task started: {task['title']}", task_id=task["id"], agent_name=task["agent_name"])
         return task
 
+    def recover_interrupted_tasks(self) -> list[dict[str, Any]]:
+        """Recover tasks left running when the server stopped unexpectedly."""
+        now = utc_now()
+        recovered: list[dict[str, Any]] = []
+        blocked: list[dict[str, Any]] = []
+        side_effect_reason = (
+            "Execution was interrupted by a server restart. Manual review is "
+            "required before retrying because the task may have side effects."
+        )
+
+        with self._lock, self._connect() as db:
+            rows = db.execute(
+                "SELECT * FROM tasks WHERE status='running'"
+            ).fetchall()
+
+            for row in rows:
+                task = dict(row)
+                if task["side_effect_level"] == "none":
+                    db.execute(
+                        "UPDATE tasks SET status='queued', started_at=NULL, "
+                        "completed_at=NULL, updated_at=?, error=NULL WHERE id=?",
+                        (now, task["id"]),
+                    )
+                    recovered.append(task)
+                else:
+                    db.execute(
+                        "UPDATE tasks SET status='blocked', started_at=NULL, "
+                        "completed_at=NULL, updated_at=?, error=?, "
+                        "result_json=NULL WHERE id=?",
+                        (now, side_effect_reason, task["id"]),
+                    )
+                    blocked.append(task)
+
+                db.execute(
+                    "UPDATE agent_status SET status='idle', current_task_id=NULL, "
+                    "last_seen_at=? WHERE current_task_id=?",
+                    (now, task["id"]),
+                )
+
+        for task in recovered:
+            self.add_activity(
+                "task.requeued",
+                f"Task requeued after server restart: {task['title']}",
+                task_id=task["id"],
+                agent_name=task["agent_name"],
+                payload={"reason": "server_restart"},
+            )
+
+        for task in blocked:
+            self.add_activity(
+                "task.blocked",
+                f"Task blocked after server restart: {task['title']}",
+                task_id=task["id"],
+                agent_name=task["agent_name"],
+                payload={"reason": side_effect_reason},
+            )
+
+        return recovered + blocked
+
     def start_workflow_stage(self, task_id: str) -> dict[str, Any]:
         now = utc_now()
 

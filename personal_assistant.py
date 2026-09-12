@@ -3,6 +3,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from risk import should_defer_exact_approval
 from store import TaskStore
 
 
@@ -22,20 +23,6 @@ class PersonalAssistantHandoffResult(BaseModel):
     side_effect_level: str
     requires_approval: bool
     approval_id: str | None = None
-
-
-def should_defer_exact_approval(request_text: str) -> bool:
-    """Return true when a handoff should wait for an exact verified approval."""
-    content = request_text.lower()
-    verified_execution_markers = (
-        "use verified replace text",
-        "verified replace text",
-        "verified_replace_text",
-        "use verified write text file",
-        "verified write text file",
-        "verified_write_text_file",
-    )
-    return any(marker in content for marker in verified_execution_markers)
 
 
 def _default_title(request: str) -> str:

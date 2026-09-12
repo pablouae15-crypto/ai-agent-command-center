@@ -94,3 +94,69 @@ def test_seed_defaults_records_initialization_activity_once(tmp_path: Path) -> N
     ]
 
     assert len(initialized) == 1
+
+
+def test_recover_interrupted_tasks_requeues_side_effect_free_work(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+
+    task = store.create_task(
+        title="Interrupted read-only task",
+        description="Recover this task after a server restart.",
+        agent_name="Orchestrator",
+        priority="Medium",
+        side_effect_level="none",
+        requires_approval=False,
+    )
+
+    claimed = store.claim_next_task()
+    assert claimed is not None
+    assert claimed["id"] == task["id"]
+
+    recovered = store.recover_interrupted_tasks()
+
+    current = store.get_task(str(task["id"]))
+    assert current is not None
+    assert current["status"] == "queued"
+    assert current["started_at"] is None
+    assert current["error"] is None
+    assert [item["id"] for item in recovered] == [task["id"]]
+
+    activity = store.list_activity(limit=5)
+    assert any(
+        item["event_type"] == "task.requeued"
+        and item["task_id"] == task["id"]
+        for item in activity
+    )
+
+
+def test_recover_interrupted_tasks_blocks_side_effecting_work(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+
+    task = store.create_task(
+        title="Interrupted external task",
+        description="Do not retry this automatically.",
+        agent_name="Orchestrator",
+        priority="Medium",
+        side_effect_level="external",
+        requires_approval=True,
+        defer_exact_approval=True,
+    )
+
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE tasks SET status='running', started_at=?, updated_at=? WHERE id=?",
+            ("2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00", task["id"]),
+        )
+
+    recovered = store.recover_interrupted_tasks()
+
+    current = store.get_task(str(task["id"]))
+    assert current is not None
+    assert current["status"] == "blocked"
+    assert current["started_at"] is None
+    assert "Manual review is required" in current["error"]
+    assert [item["id"] for item in recovered] == [task["id"]]
