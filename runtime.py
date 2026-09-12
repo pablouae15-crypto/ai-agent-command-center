@@ -301,6 +301,8 @@ class Runtime:
                                     )
                                     continue
 
+                            matching_blocked_stage = None
+
                             if preview.get("type") == "verified_edit_execution":
                                 output = execute_approved_verified_edit(
                                     store=self.store,
