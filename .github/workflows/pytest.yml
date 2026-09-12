@@ -12,7 +12,7 @@ jobs:
     # The suite uses the separate local execution engine and sandbox on D:.
     # Keep this off pull_request events because self-hosted runners are trusted
     # machines and must not execute untrusted fork code.
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: [self-hosted, windows, x64]
 
     steps:
       - name: Check out repository
