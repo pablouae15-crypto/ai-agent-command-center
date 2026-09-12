@@ -669,6 +669,13 @@
     margin-top: 18px;
   }
 
+  .task-detail-outcome {
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #102340;
+  }
+
   .task-detail-section pre {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
@@ -1234,6 +1241,33 @@ function taskResultDisplay(task) {
   }
 }
 
+function taskOutcomeDisplay(task) {
+  const status = task?.status || 'unknown';
+  const summary = assistantTaskSummary(task);
+
+  if (status === 'completed') {
+    return summary || 'Completed successfully.';
+  }
+
+  if (['failed', 'blocked', 'partial'].includes(status)) {
+    return task.error || summary || 'No additional detail was provided.';
+  }
+
+  if (status === 'awaiting_approval') {
+    return 'Waiting for human approval.';
+  }
+
+  if (status === 'running') {
+    return 'Task is currently running.';
+  }
+
+  if (status === 'queued') {
+    return 'Task is queued and waiting to start.';
+  }
+
+  return 'No result is available yet.';
+}
+
 
 function taskDetailCopyText(task) {
   const lines = [
@@ -1320,6 +1354,11 @@ function openTaskDetail(taskId) {
     <div class="task-detail-section">
       <span class="task-detail-label">Title</span>
       <h3>${esc(task.title || '—')}</h3>
+    </div>
+
+    <div class="task-detail-section task-detail-outcome">
+      <span class="task-detail-label">Task Result</span>
+      <pre>${esc(taskOutcomeDisplay(task))}</pre>
     </div>
 
     <div class="task-detail-section">
