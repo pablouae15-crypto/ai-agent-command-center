@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -89,9 +90,15 @@ def classify_task_side_effect(
         "do not delete",
         "do not remove",
         "do not erase",
+        "do not run command",
+        "do not call external service",
+        "do not send email",
+        "do not send the email",
         "without modifying",
         "without editing",
         "without changing",
+        "without running commands",
+        "without calling external services",
         "no changes",
     ):
         actionable_content = actionable_content.replace(phrase, "")
@@ -126,6 +133,14 @@ def classify_task_side_effect(
         "run command",
     )
 
+    def contains_action(text: str, action: str) -> bool:
+        """Match complete action phrases, not larger words such as commands."""
+        normalized_action = action.strip()
+        return re.search(
+            rf"(?<!\w){re.escape(normalized_action)}(?!\w)",
+            text,
+        ) is not None
+
     file_or_system_target = (
         "\\" in content
         or ":\\" in content
@@ -143,10 +158,16 @@ def classify_task_side_effect(
         or "database" in content
     )
 
-    if file_or_system_target and any(action in actionable_content for action in destructive_actions):
+    if file_or_system_target and any(
+        contains_action(actionable_content, action)
+        for action in destructive_actions
+    ):
         return "destructive"
 
-    if file_or_system_target and any(action in actionable_content for action in external_actions):
+    if file_or_system_target and any(
+        contains_action(actionable_content, action)
+        for action in external_actions
+    ):
         return "external"
 
     account_side_effects = (
@@ -158,7 +179,10 @@ def classify_task_side_effect(
         "deploy ",
     )
 
-    if any(action in content for action in account_side_effects):
+    if any(
+        contains_action(actionable_content, action)
+        for action in account_side_effects
+    ):
         return "external"
 
     return "none"
