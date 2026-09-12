@@ -52,10 +52,32 @@ def _default_title(request: str) -> str:
 
 
 def build_personal_assistant_context(store: TaskStore) -> dict[str, Any]:
+    visible_tasks = store.list_task_visibility(12)
+
+    compact_tasks = [
+        {
+            "id": task.get("id"),
+            "title": task.get("title"),
+            "agent_name": task.get("agent_name"),
+            "priority": task.get("priority"),
+            "status": task.get("status"),
+            "side_effect_level": task.get("side_effect_level"),
+            "requires_approval": bool(task.get("requires_approval")),
+            "approval_id": task.get("approval_id"),
+            "created_at": task.get("created_at"),
+            "updated_at": task.get("updated_at"),
+            "routed_specialist": task.get("routed_specialist"),
+            "routing_reason": task.get("routing_reason"),
+            "latest_activity_type": task.get("latest_activity_type"),
+            "latest_activity_at": task.get("latest_activity_at"),
+        }
+        for task in visible_tasks
+    ]
+
     return {
         "summary": store.summary(),
         "agents": store.list_agents(),
-        "tasks": store.list_task_visibility(12),
+        "tasks": compact_tasks,
         "approvals": store.list_approvals(),
         "activity": store.list_activity(15),
     }
