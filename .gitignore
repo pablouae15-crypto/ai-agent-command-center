@@ -25,6 +25,7 @@ command-center.db
 
 # Local checkpoints and manual backups
 checkpoints/
+backups/
 *.pre-*.py
 *.post-*.py
 static/*.pre-*.html
