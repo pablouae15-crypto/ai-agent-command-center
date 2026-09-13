@@ -3,6 +3,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from config import settings
 from risk import should_defer_exact_approval
 from store import TaskStore
 
@@ -27,6 +28,10 @@ class PersonalAssistantHandoffResult(BaseModel):
     side_effect_level: str
     requires_approval: bool
     approval_id: str | None = None
+
+
+class AssistantContextLimitExceeded(ValueError):
+    """Raised before a handoff could create a task or call the model."""
 
 
 def _default_title(request: str) -> str:
@@ -129,6 +134,25 @@ def _assistant_description(
     )
 
 
+def _enforce_assistant_context_limit(
+    description: str,
+    max_description_chars: int,
+) -> None:
+    if max_description_chars <= 0:
+        return
+
+    actual_chars = len(description)
+    if actual_chars <= max_description_chars:
+        return
+
+    raise AssistantContextLimitExceeded(
+        "Assistant handoff input is "
+        f"{actual_chars:,} characters, above the local limit of "
+        f"{max_description_chars:,}. Shorten the request or context and "
+        "retry. No task was created and no OpenAI request was sent."
+    )
+
+
 def _parse_verified_edit_batch_request(request_text: str) -> dict | None:
     import re
 
@@ -199,6 +223,7 @@ def _parse_verified_edit_batch_request(request_text: str) -> dict | None:
 def handoff_to_command_center(
     store: TaskStore,
     request: PersonalAssistantRequest,
+    max_description_chars: int | None = None,
 ) -> PersonalAssistantHandoffResult:
     """
     Submit Personal AI Assistant work to the Command Center.
@@ -215,6 +240,13 @@ def handoff_to_command_center(
     description = _assistant_description(
         original_request,
         command_center_context,
+    )
+
+    _enforce_assistant_context_limit(
+        description,
+        settings.max_assistant_context_chars
+        if max_description_chars is None
+        else max_description_chars,
     )
 
     title = (

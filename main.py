@@ -13,7 +13,11 @@ from agent import api_key_configured
 from config import settings
 from runtime import Runtime
 from store import TaskStore
-from personal_assistant import PersonalAssistantRequest, handoff_to_command_center
+from personal_assistant import (
+    AssistantContextLimitExceeded,
+    PersonalAssistantRequest,
+    handoff_to_command_center,
+)
 from risk import classify_task_side_effect, should_defer_exact_approval
 from write_approval import VerifiedGmailDraftRequest
 from execution_adapter import ExecutionEngineAdapter
@@ -122,7 +126,11 @@ def assistant_handoff(request: PersonalAssistantRequest) -> dict:
         }
     )
 
-    result = handoff_to_command_center(store, safe_request)
+    try:
+        result = handoff_to_command_center(store, safe_request)
+    except AssistantContextLimitExceeded as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+
     return result.model_dump()
 
 
