@@ -156,28 +156,47 @@ def _enforce_assistant_context_limit(
 def _parse_verified_edit_batch_request(request_text: str) -> dict | None:
     import re
 
+    field_labels = (
+        "Capability",
+        "Repository path",
+        "Verification profile",
+        "Path",
+        "Old text",
+        "New text",
+        "Expected replacements",
+    )
+    next_fields = "|".join(
+        re.escape(label) for label in field_labels
+    )
+
     def field(label: str, section: str) -> str | None:
         match = re.search(
-            rf"(?im)^\s*{re.escape(label)}:\s*(.*)$",
+            rf"(?ims)^[ \t]*\*{re.escape(label)}:[ \t]*"
+            rf"(.*?)(?=^[ \t]*(?:\*(?:{next_fields}):|Edit\s+\d+\s*:)|\Z)",
             section,
         )
-        return match.group(1).rstrip() if match else None
+        return match.group(1).strip("\r\n") if match else None
 
     capability = field("Capability", request_text)
     repository_path = field("Repository path", request_text)
-    verification_profile = field("Verification profile", request_text)
+    verification_profile = field(
+        "Verification profile",
+        request_text,
+    )
 
     if capability != "replace_text_batch":
         return None
+
     if not repository_path or not verification_profile:
         return None
 
     sections = re.split(
-        r"(?im)^\s*Edit\s+\d+\s*:\s*$",
+        r"(?im)^[ \t]*Edit\s+\d+[ \t]*:[ \t]*$",
         request_text,
     )[1:]
 
     edits = []
+
     for section in sections:
         path = field("Path", section)
         old_text = field("Old text", section)

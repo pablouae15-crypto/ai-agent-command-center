@@ -49,6 +49,7 @@ class ExecutionEngineAdapter:
                 "Shared Local Execution Engine is disabled or has no authorized workspace."
             )
 
+        assert self._engine is not None
         return self._engine
 
     def list_directory(
