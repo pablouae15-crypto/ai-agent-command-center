@@ -41,10 +41,8 @@ jobs:
       - name: Install project and test dependencies
         shell: cmd
         run: |
-          "D:\AI\Python312\python.exe" -m pip install --upgrade pip
-          "D:\AI\Python312\python.exe" -m pip install -e .
-          "D:\AI\Python312\python.exe" -m pip install pytest
-          "D:\AI\Python312\python.exe" -m pip install ruff==0.11.13
+          "D:\AI\Python312\python.exe" -m pip install -r requirements-ci.txt
+          "D:\AI\Python312\python.exe" -m pip install -e . --no-deps
 
       - name: Run Ruff control-flow analysis
         shell: cmd
