@@ -475,6 +475,12 @@ class Runtime:
                                 self.store.fail_task(
                                     task["id"],
                                     f"{output.summary}{evidence_text}",
+                                    failure_code="SPECIALIST_FAILED",
+                                    diagnostics={
+                                        "summary": output.summary,
+                                        "evidence": output.evidence,
+                                        "agent_name": task.get("agent_name"),
+                                    },
                                 )
                                 continue
 
@@ -482,6 +488,12 @@ class Runtime:
                                 self.store.block_task(
                                     task["id"],
                                     output.summary,
+                                    failure_code="SPECIALIST_BLOCKED",
+                                    diagnostics={
+                                        "summary": output.summary,
+                                        "evidence": output.evidence,
+                                        "agent_name": task.get("agent_name"),
+                                    },
                                 )
                                 continue
 
@@ -514,5 +526,12 @@ class Runtime:
                             },
                         )
                     except Exception as exc:  # noqa: BLE001 - the task must be audited as failed.
-                        self.store.fail_task(task["id"], str(exc))
+                        self.store.fail_task(
+                            task["id"],
+                            str(exc),
+                            failure_code="EXECUTION_EXCEPTION",
+                            diagnostics={
+                                "exception_type": type(exc).__name__,
+                            },
+                        )
             await asyncio.sleep(self.settings.worker_poll_seconds)

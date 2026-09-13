@@ -68,6 +68,8 @@ class TaskStore:
                     started_at TEXT,
                     completed_at TEXT,
                     error TEXT,
+                    failure_code TEXT,
+                    diagnostics_json TEXT,
                     result_json TEXT,
                     metadata_json TEXT NOT NULL DEFAULT '{}',
                     archived_at TEXT,
@@ -166,6 +168,18 @@ class TaskStore:
                 db.execute(
                     "ALTER TABLE tasks "
                     "ADD COLUMN workflow_managed INTEGER NOT NULL DEFAULT 0"
+                )
+
+            if "failure_code" not in task_columns:
+                db.execute(
+                    "ALTER TABLE tasks "
+                    "ADD COLUMN failure_code TEXT"
+                )
+
+            if "diagnostics_json" not in task_columns:
+                db.execute(
+                    "ALTER TABLE tasks "
+                    "ADD COLUMN diagnostics_json TEXT"
                 )
 
             approval_columns = {
@@ -420,7 +434,9 @@ class TaskStore:
                 if task["side_effect_level"] == "none":
                     db.execute(
                         "UPDATE tasks SET status='queued', started_at=NULL, "
-                        "completed_at=NULL, updated_at=?, error=NULL WHERE id=?",
+                        "completed_at=NULL, updated_at=?, error=NULL, "
+                        "failure_code=NULL, diagnostics_json=NULL, "
+                        "result_json=NULL WHERE id=?",
                         (now, task["id"]),
                     )
                     recovered.append(task)
@@ -428,8 +444,27 @@ class TaskStore:
                     db.execute(
                         "UPDATE tasks SET status='blocked', started_at=NULL, "
                         "completed_at=NULL, updated_at=?, error=?, "
-                        "result_json=NULL WHERE id=?",
-                        (now, side_effect_reason, task["id"]),
+                        "failure_code=?, diagnostics_json=?, result_json=? "
+                        "WHERE id=?",
+                        (
+                            now,
+                            side_effect_reason,
+                            "RESTART_REVIEW_REQUIRED",
+                            json.dumps({
+                                "reason": "server_restart",
+                                "side_effect_level": task["side_effect_level"],
+                            }),
+                            json.dumps({
+                                "status": "blocked",
+                                "summary": side_effect_reason,
+                                "failure_code": "RESTART_REVIEW_REQUIRED",
+                                "diagnostics": {
+                                    "reason": "server_restart",
+                                    "side_effect_level": task["side_effect_level"],
+                                },
+                            }),
+                            task["id"],
+                        ),
                     )
                     blocked.append(task)
 
@@ -454,7 +489,14 @@ class TaskStore:
                 f"Task blocked after server restart: {task['title']}",
                 task_id=task["id"],
                 agent_name=task["agent_name"],
-                payload={"reason": side_effect_reason},
+                payload={
+                    "reason": side_effect_reason,
+                    "failure_code": "RESTART_REVIEW_REQUIRED",
+                    "diagnostics": {
+                        "reason": "server_restart",
+                        "side_effect_level": task["side_effect_level"],
+                    },
+                },
             )
 
         return recovered + blocked
@@ -483,7 +525,9 @@ class TaskStore:
 
             db.execute(
                 "UPDATE tasks SET status='running', started_at=?, "
-                "updated_at=?, completed_at=NULL, error=NULL WHERE id=?",
+                "updated_at=?, completed_at=NULL, error=NULL, "
+                "failure_code=NULL, diagnostics_json=NULL, result_json=NULL "
+                "WHERE id=?",
                 (now, now, task_id),
             )
 
@@ -528,7 +572,8 @@ class TaskStore:
 
             db.execute(
                 "UPDATE tasks SET status='running', updated_at=?, "
-                "completed_at=NULL, error=NULL WHERE id=?",
+                "completed_at=NULL, error=NULL, failure_code=NULL, "
+                "diagnostics_json=NULL, result_json=NULL WHERE id=?",
                 (now, task_id),
             )
 
@@ -587,16 +632,36 @@ class TaskStore:
 
             completed_at = now if status == "completed" else None
             error = summary[:2000] if status in {"failed", "blocked", "partial"} else None
+            failure_code = (
+                None
+                if status == "completed"
+                else {
+                    "failed": "SPECIALIST_FAILED",
+                    "blocked": "SPECIALIST_BLOCKED",
+                    "partial": "TASK_PARTIAL",
+                }[status]
+            )
+            diagnostics = (
+                None
+                if status == "completed"
+                else {
+                    "summary": summary,
+                    "workflow_stage": True,
+                }
+            )
 
             db.execute(
                 "UPDATE tasks SET status=?, completed_at=?, updated_at=?, "
-                "result_json=?, error=? WHERE id=?",
+                "result_json=?, error=?, failure_code=?, diagnostics_json=? "
+                "WHERE id=?",
                 (
                     status,
                     completed_at,
                     now,
                     json.dumps(result),
                     error,
+                    failure_code,
+                    json.dumps(diagnostics) if diagnostics else None,
                     task_id,
                 ),
             )
@@ -611,6 +676,8 @@ class TaskStore:
                 "parent_task_id": task["parent_task_id"],
                 "stage_index": task["stage_index"],
                 "status": status,
+                "failure_code": failure_code,
+                "diagnostics": diagnostics,
             },
         )
 
@@ -637,7 +704,8 @@ class TaskStore:
         with self._lock, self._connect() as db:
             db.execute(
                 "UPDATE tasks SET status='queued', updated_at=?, completed_at=NULL, "
-                "error=NULL, approval_id=NULL WHERE id=?",
+                "error=NULL, failure_code=NULL, diagnostics_json=NULL, "
+                "result_json=NULL, approval_id=NULL WHERE id=?",
                 (now, task_id),
             )
             db.execute(
@@ -664,30 +732,86 @@ class TaskStore:
         now = utc_now()
         task = self.get_task(task_id)
         with self._lock, self._connect() as db:
-            db.execute("UPDATE tasks SET status='completed', completed_at=?, updated_at=?, result_json=?, error=NULL WHERE id=?", (now, now, json.dumps(result), task_id))
+            db.execute(
+                "UPDATE tasks SET status='completed', completed_at=?, "
+                "updated_at=?, result_json=?, error=NULL, failure_code=NULL, "
+                "diagnostics_json=NULL WHERE id=?",
+                (now, now, json.dumps(result), task_id),
+            )
             if task:
                 db.execute("UPDATE agent_status SET status='idle', current_task_id=NULL, last_seen_at=? WHERE name=?", (now, task["agent_name"]))
         self.add_activity("task.completed", f"Task completed: {task['title'] if task else task_id}", task_id=task_id,
                           agent_name=task["agent_name"] if task else None)
 
-    def fail_task(self, task_id: str, error: str) -> None:
+    def fail_task(
+        self,
+        task_id: str,
+        error: str,
+        failure_code: str = "TASK_EXECUTION_FAILED",
+        diagnostics: dict[str, Any] | None = None,
+    ) -> None:
         now = utc_now()
         task = self.get_task(task_id)
+        diagnostic_payload = dict(diagnostics or {})
+        result = {
+            "status": "failed",
+            "summary": error[:2000],
+            "failure_code": failure_code,
+            "diagnostics": diagnostic_payload,
+        }
         with self._lock, self._connect() as db:
-            db.execute("UPDATE tasks SET status='failed', error=?, updated_at=?, result_json=NULL, completed_at=NULL WHERE id=?", (error[:2000], now, task_id))
+            db.execute(
+                "UPDATE tasks SET status='failed', error=?, updated_at=?, "
+                "result_json=?, failure_code=?, diagnostics_json=?, "
+                "completed_at=NULL WHERE id=?",
+                (
+                    error[:2000],
+                    now,
+                    json.dumps(result),
+                    failure_code,
+                    json.dumps(diagnostic_payload),
+                    task_id,
+                ),
+            )
             if task:
                 db.execute("UPDATE agent_status SET status='idle', current_task_id=NULL, last_seen_at=? WHERE name=?", (now, task["agent_name"]))
         self.add_activity("task.failed", f"Task failed: {task['title'] if task else task_id}", task_id=task_id,
-                          agent_name=task["agent_name"] if task else None, payload={"error": error[:500]})
+                          agent_name=task["agent_name"] if task else None,
+                          payload={
+                              "error": error[:500],
+                              "failure_code": failure_code,
+                              "diagnostics": diagnostic_payload,
+                          })
 
-    def block_task(self, task_id: str, reason: str) -> None:
+    def block_task(
+        self,
+        task_id: str,
+        reason: str,
+        failure_code: str = "TASK_BLOCKED",
+        diagnostics: dict[str, Any] | None = None,
+    ) -> None:
         now = utc_now()
         task = self.get_task(task_id)
+        diagnostic_payload = dict(diagnostics or {})
+        result = {
+            "status": "blocked",
+            "summary": reason[:2000],
+            "failure_code": failure_code,
+            "diagnostics": diagnostic_payload,
+        }
         with self._lock, self._connect() as db:
             db.execute(
                 "UPDATE tasks SET status='blocked', error=?, updated_at=?, "
-                "result_json=NULL, completed_at=NULL WHERE id=?",
-                (reason[:2000], now, task_id),
+                "result_json=?, failure_code=?, diagnostics_json=?, "
+                "completed_at=NULL WHERE id=?",
+                (
+                    reason[:2000],
+                    now,
+                    json.dumps(result),
+                    failure_code,
+                    json.dumps(diagnostic_payload),
+                    task_id,
+                ),
             )
             if task:
                 db.execute(
@@ -700,7 +824,11 @@ class TaskStore:
             f"Task blocked: {task['title'] if task else task_id}",
             task_id=task_id,
             agent_name=task["agent_name"] if task else None,
-            payload={"reason": reason[:500]},
+            payload={
+                "reason": reason[:500],
+                "failure_code": failure_code,
+                "diagnostics": diagnostic_payload,
+            },
         )
 
     def partial_task(
@@ -714,11 +842,14 @@ class TaskStore:
         with self._lock, self._connect() as db:
             db.execute(
                 "UPDATE tasks SET status='partial', error=?, updated_at=?, "
-                "result_json=?, completed_at=NULL WHERE id=?",
+                "result_json=?, failure_code=?, diagnostics_json=?, "
+                "completed_at=NULL WHERE id=?",
                 (
                     summary[:2000],
                     now,
                     json.dumps(result),
+                    "TASK_PARTIAL",
+                    json.dumps({"summary": summary[:2000]}),
                     task_id,
                 ),
             )
@@ -733,7 +864,11 @@ class TaskStore:
             f"Task partial: {task['title'] if task else task_id}",
             task_id=task_id,
             agent_name=task["agent_name"] if task else None,
-            payload={"summary": summary[:500]},
+            payload={
+                "summary": summary[:500],
+                "failure_code": "TASK_PARTIAL",
+                "diagnostics": {"summary": summary[:2000]},
+            },
         )
 
     def create_exact_approval(
@@ -1142,18 +1277,45 @@ class TaskStore:
 
                 task_status = "queued" if decision == "approved" else "failed"
                 error = None if decision == "approved" else "Rejected by human reviewer"
+                failure_code = (
+                    None if decision == "approved" else "APPROVAL_REJECTED"
+                )
+                diagnostics = (
+                    None
+                    if decision == "approved"
+                    else {
+                        "approval_id": approval_id,
+                        "decided_by": decided_by,
+                    }
+                )
+                result_json = (
+                    None
+                    if decision == "approved"
+                    else json.dumps({
+                        "status": "failed",
+                        "summary": error,
+                        "failure_code": failure_code,
+                        "diagnostics": diagnostics,
+                    })
+                )
 
                 db.execute(
                     """
                     UPDATE tasks
                     SET status=?,
                         error=?,
+                        failure_code=?,
+                        diagnostics_json=?,
+                        result_json=?,
                         updated_at=?
                     WHERE id=?
                     """,
                     (
                         task_status,
                         error,
+                        failure_code,
+                        json.dumps(diagnostics) if diagnostics else None,
+                        result_json,
                         now,
                         approval["task_id"],
                     ),
@@ -1184,6 +1346,8 @@ class TaskStore:
                 payload={
                     "approval_id": approval_id,
                     "decided_by": decided_by,
+                    "failure_code": failure_code,
+                    "diagnostics": diagnostics,
                 },
             )
 

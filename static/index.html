@@ -1241,6 +1241,39 @@ function taskResultDisplay(task) {
   }
 }
 
+function taskDiagnostics(task) {
+  const raw = task?.diagnostics_json;
+
+  if (raw) {
+    try {
+      return typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch (_) {
+      return { raw: String(raw) };
+    }
+  }
+
+  const result = task?.result_json;
+
+  if (!result) return null;
+
+  try {
+    const parsed =
+      typeof result === 'string' ? JSON.parse(result) : result;
+
+    return parsed?.diagnostics || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function taskDiagnosticsDisplay(task) {
+  const diagnostics = taskDiagnostics(task);
+
+  if (!diagnostics) return '—';
+
+  return JSON.stringify(diagnostics, null, 2);
+}
+
 function taskOutcomeDisplay(task) {
   const status = task?.status || 'unknown';
   const summary = assistantTaskSummary(task);
@@ -1274,6 +1307,7 @@ function taskDetailCopyText(task) {
     `Task ID: ${task.id || '—'}`,
     `Priority: ${task.priority || '—'}`,
     `Status: ${task.status || '—'}`,
+    `Failure Code: ${task.failure_code || '—'}`,
     `Owner: ${task.agent_name || 'Orchestrator'}`,
     `Routed Specialist: ${task.routed_specialist || '—'}`,
     `Side Effect Level: ${task.side_effect_level || 'none'}`,
@@ -1299,6 +1333,9 @@ function taskDetailCopyText(task) {
     '',
     'ERROR / FAILURE DETAIL',
     task.error || '—',
+    '',
+    'FAILURE DIAGNOSTICS',
+    taskDiagnosticsDisplay(task),
     '',
     'RESULT / OUTPUT',
     taskResultDisplay(task)
@@ -1335,6 +1372,7 @@ function openTaskDetail(taskId) {
       ${field('Task ID', task.id)}
       ${field('Priority', task.priority)}
       ${field('Status', task.status)}
+      ${field('Failure Code', task.failure_code || '—')}
       ${field('Owner', task.agent_name || 'Orchestrator')}
       ${field('Routed Specialist', task.routed_specialist || '—')}
       ${field('Side Effect Level', task.side_effect_level || 'none')}
@@ -1383,6 +1421,17 @@ function openTaskDetail(taskId) {
           <div class="task-detail-section">
             <span class="task-detail-label">Error / Failure Detail</span>
             <pre class="error">${esc(task.error)}</pre>
+          </div>
+        `
+        : ''
+    }
+
+    ${
+      task.failure_code || taskDiagnostics(task)
+        ? `
+          <div class="task-detail-section">
+            <span class="task-detail-label">Failure Diagnostics</span>
+            <pre>${esc(taskDiagnosticsDisplay(task))}</pre>
           </div>
         `
         : ''

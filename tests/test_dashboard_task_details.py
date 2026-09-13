@@ -31,4 +31,7 @@ def test_task_details_surfaces_status_result_before_full_context() -> None:
     assert "Task Result" in source
     assert "taskOutcomeDisplay(task)" in source
     assert "task.error || summary || 'No additional detail was provided.'" in source
+    assert "Failure Code" in source
+    assert "Failure Diagnostics" in source
+    assert "taskDiagnosticsDisplay(task)" in source
     assert source.index("Task Result") < source.index("Full Description")
