@@ -15,7 +15,7 @@ jobs:
     runs-on: [self-hosted, windows, x64]
     env:
       EXECUTION_ENGINE_ENABLED: "true"
-      EXECUTION_ENGINE_WORKSPACE_ROOTS: "D:\\Shared-Local-Execution-Engine-Sandbox"
+      EXECUTION_ENGINE_WORKSPACE_ROOTS: "D:\\Shared-Local-Execution-Engine-Sandbox;D:\\AI-Agent-Command-Center"
       EXECUTION_ENGINE_AUDIT_LOG: "D:\\AI-Agent-Command-Center\\logs\\execution-engine.jsonl"
 
     steps:
@@ -26,6 +26,7 @@ jobs:
         shell: cmd
         run: |
           git config --global --add safe.directory "D:\Shared-Local-Execution-Engine-Sandbox"
+          git config --global --add safe.directory "D:\AI-Agent-Command-Center"
           if not exist "D:\Shared-Local-Execution-Engine\engine" (
             echo D:\Shared-Local-Execution-Engine is required by the test suite.
             exit /b 1
