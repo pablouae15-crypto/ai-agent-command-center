@@ -6,7 +6,7 @@ from pathlib import Path
 from store import TaskStore
 
 
-def test_block_task_sets_blocked_and_clears_result(
+def test_block_task_persists_diagnostics(
     tmp_path: Path,
 ) -> None:
     store = TaskStore(
@@ -39,7 +39,14 @@ def test_block_task_sets_blocked_and_clears_result(
     assert current is not None
     assert current["status"] == "blocked"
     assert current["error"] == "Approval is required."
-    assert current["result_json"] is None
+    assert current["failure_code"] == "TASK_BLOCKED"
+    assert json.loads(current["diagnostics_json"]) == {}
+    assert json.loads(current["result_json"]) == {
+        "status": "blocked",
+        "summary": "Approval is required.",
+        "failure_code": "TASK_BLOCKED",
+        "diagnostics": {},
+    }
     assert current["completed_at"] is None
 
 
@@ -85,3 +92,7 @@ def test_partial_task_preserves_structured_result(
     persisted = json.loads(current["result_json"])
 
     assert persisted == result
+    assert current["failure_code"] == "TASK_PARTIAL"
+    assert json.loads(current["diagnostics_json"]) == {
+        "summary": "Inspection completed; implementation incomplete.",
+    }

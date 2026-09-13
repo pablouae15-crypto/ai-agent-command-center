@@ -138,6 +138,46 @@ def test_decided_exact_approval_is_retrievable_with_decision_metadata(
     assert loaded["decided_at"] is not None
 
 
+def test_rejected_approval_persists_failure_diagnostics_and_activity(
+    tmp_path: Path,
+) -> None:
+    import json
+
+    store = make_store(tmp_path)
+    task = make_task(store)
+    request = make_request(str(task["id"]))
+    pending = store.create_exact_approval(request)
+
+    decided = store.decide_approval(
+        str(pending["id"]),
+        "rejected",
+        decided_by="test-user",
+    )
+
+    current = store.get_task(str(task["id"]))
+    assert decided["status"] == "rejected"
+    assert current is not None
+    assert current["status"] == "failed"
+    assert current["error"] == "Rejected by human reviewer"
+    assert current["failure_code"] == "APPROVAL_REJECTED"
+    assert json.loads(current["diagnostics_json"]) == {
+        "approval_id": pending["id"],
+        "decided_by": "test-user",
+    }
+
+    persisted = json.loads(current["result_json"])
+    assert persisted["failure_code"] == "APPROVAL_REJECTED"
+    assert persisted["diagnostics"]["approval_id"] == pending["id"]
+
+    activity = store.list_activity(limit=20)
+    rejection = next(
+        item for item in activity if item["event_type"] == "approval.rejected"
+    )
+    payload = json.loads(rejection["payload_json"])
+    assert payload["failure_code"] == "APPROVAL_REJECTED"
+    assert payload["diagnostics"]["decided_by"] == "test-user"
+
+
 def test_gmail_exact_approval_stores_display_payload(
     tmp_path: Path,
 ) -> None:

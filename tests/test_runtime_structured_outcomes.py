@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -138,6 +139,12 @@ def test_structured_failed_outcome_fails_task(
     assert current["status"] == "failed"
     assert current["error"] is not None
     assert "Verification failed" in current["error"]
+    assert current["failure_code"] == "SPECIALIST_FAILED"
+    assert json.loads(current["diagnostics_json"]) == {
+        "summary": "Verification failed.",
+        "evidence": ["pytest failed"],
+        "agent_name": "Orchestrator",
+    }
 
 
 def test_structured_blocked_outcome_sets_blocked(
@@ -185,6 +192,12 @@ def test_structured_blocked_outcome_sets_blocked(
     assert current is not None
     assert current["status"] == "blocked"
     assert current["error"] == "Approval is required."
+    assert current["failure_code"] == "SPECIALIST_BLOCKED"
+    assert json.loads(current["diagnostics_json"]) == {
+        "summary": "Approval is required.",
+        "evidence": [],
+        "agent_name": "Orchestrator",
+    }
 
 
 def test_structured_partial_outcome_sets_partial(
@@ -235,3 +248,7 @@ def test_structured_partial_outcome_sets_partial(
         "Inspection completed; implementation incomplete."
     )
     assert current["result_json"] is not None
+    assert current["failure_code"] == "TASK_PARTIAL"
+    assert json.loads(current["diagnostics_json"]) == {
+        "summary": "Inspection completed; implementation incomplete.",
+    }

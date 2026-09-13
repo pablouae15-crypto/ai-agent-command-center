@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from store import TaskStore
@@ -14,7 +15,7 @@ def _store(tmp_path: Path) -> TaskStore:
     return store
 
 
-def test_fail_task_clears_prior_result_and_completed_timestamp(
+def test_fail_task_persists_diagnostics_and_clears_completed_timestamp(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
@@ -43,7 +44,14 @@ def test_fail_task_clears_prior_result_and_completed_timestamp(
     assert current is not None
     assert current["status"] == "failed"
     assert current["error"] == "Later failure"
-    assert current["result_json"] is None
+    assert current["failure_code"] == "TASK_EXECUTION_FAILED"
+    assert json.loads(current["diagnostics_json"]) == {}
+    assert json.loads(current["result_json"]) == {
+        "status": "failed",
+        "summary": "Later failure",
+        "failure_code": "TASK_EXECUTION_FAILED",
+        "diagnostics": {},
+    }
     assert current["completed_at"] is None
 
 
@@ -76,6 +84,8 @@ def test_complete_task_clears_prior_error(
     assert current is not None
     assert current["status"] == "completed"
     assert current["error"] is None
+    assert current["failure_code"] is None
+    assert current["diagnostics_json"] is None
     assert current["result_json"] is not None
     assert current["completed_at"] is not None
 
@@ -121,6 +131,9 @@ def test_recover_interrupted_tasks_requeues_side_effect_free_work(
     assert current["status"] == "queued"
     assert current["started_at"] is None
     assert current["error"] is None
+    assert current["failure_code"] is None
+    assert current["diagnostics_json"] is None
+    assert current["result_json"] is None
     assert [item["id"] for item in recovered] == [task["id"]]
 
     activity = store.list_activity(limit=5)
@@ -159,4 +172,12 @@ def test_recover_interrupted_tasks_blocks_side_effecting_work(
     assert current["status"] == "blocked"
     assert current["started_at"] is None
     assert "Manual review is required" in current["error"]
+    assert current["failure_code"] == "RESTART_REVIEW_REQUIRED"
+    assert json.loads(current["diagnostics_json"]) == {
+        "reason": "server_restart",
+        "side_effect_level": "external",
+    }
+    assert json.loads(current["result_json"])["failure_code"] == (
+        "RESTART_REVIEW_REQUIRED"
+    )
     assert [item["id"] for item in recovered] == [task["id"]]
