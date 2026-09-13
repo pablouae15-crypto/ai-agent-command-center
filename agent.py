@@ -843,10 +843,33 @@ def build_router(model: str) -> Agent:
     )
 
 
+def enforce_agent_input_limit(
+    description: str,
+    *,
+    label: str = "Task input",
+    max_chars: int | None = None,
+) -> None:
+    limit = settings.max_agent_input_chars if max_chars is None else max_chars
+    if limit <= 0:
+        return
+
+    actual_chars = len(description)
+    if actual_chars <= limit:
+        return
+
+    raise RuntimeError(
+        f"{label} is {actual_chars:,} characters, above the local limit of "
+        f"{limit:,}. Shorten the request and retry. "
+        "No OpenAI request was sent."
+    )
+
+
 async def classify_task_route(
     description: str,
     model: str,
 ) -> RoutingDecision:
+    enforce_agent_input_limit(description, label="Routing input")
+
     result = await Runner.run(
         build_router(model),
         description,
@@ -893,6 +916,8 @@ async def plan_orchestration(
     description: str,
     model: str,
 ) -> OrchestrationPlan:
+    enforce_agent_input_limit(description, label="Planning input")
+
     result = await Runner.run(
         build_orchestration_planner(model),
         description,
@@ -1088,6 +1113,8 @@ async def run_specialist(
     model: str,
     store: TaskStore,
 ) -> SpecialistOutcome:
+    enforce_agent_input_limit(str(task.get("description") or ""))
+
     specialist_name = str(task.get("agent_name") or "").strip()
 
     if specialist_name == "Orchestrator":
@@ -1132,6 +1159,8 @@ async def run_orchestrator(
     model: str,
     store: TaskStore,
 ) -> SpecialistOutcome:
+    enforce_agent_input_limit(str(task.get("description") or ""))
+
     if not api_key_configured():
         raise RuntimeError("OPENAI_API_KEY is not configured")
 
@@ -1329,6 +1358,7 @@ async def run_orchestrator(
                 )
 
             stage_prompt = "\n\n".join(stage_prompt_parts)
+            enforce_agent_input_limit(stage_prompt, label="Stage input")
 
             store.add_activity(
                 "orchestrator.stage_started",

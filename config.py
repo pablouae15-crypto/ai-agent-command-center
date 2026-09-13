@@ -63,6 +63,14 @@ class Settings:
         "gpt-5",
     )
 
+    max_assistant_context_chars: int = int(
+        os.getenv("MAX_ASSISTANT_CONTEXT_CHARS", "12000")
+    )
+
+    max_agent_input_chars: int = int(
+        os.getenv("MAX_AGENT_INPUT_CHARS", "24000")
+    )
+
     scheduler_poll_seconds: float = float(
         os.getenv("SCHEDULER_POLL_SECONDS", "2")
     )

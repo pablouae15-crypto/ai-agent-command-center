@@ -1,11 +1,14 @@
 from pathlib import Path
 import sys
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, r'D:\Shared-Local-Execution-Engine')
 
 from personal_assistant import (
+    AssistantContextLimitExceeded,
     PersonalAssistantRequest,
     handoff_to_command_center,
 )
@@ -98,6 +101,21 @@ def test_personal_assistant_handoff_keeps_unapproved_edit_on_normal_approval_pat
     assert task["status"] == "awaiting_approval"
     assert task["approval_id"] is not None
     assert result.requires_approval is True
+
+
+def test_personal_assistant_handoff_rejects_oversized_context_before_task_creation(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+
+    with pytest.raises(AssistantContextLimitExceeded, match="No task was created"):
+        handoff_to_command_center(
+            store,
+            PersonalAssistantRequest(request="x" * 500),
+            max_description_chars=100,
+        )
+
+    assert store.list_tasks() == []
 
 
 
