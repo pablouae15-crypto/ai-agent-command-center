@@ -44,6 +44,12 @@ jobs:
           "D:\AI\Python312\python.exe" -m pip install --upgrade pip
           "D:\AI\Python312\python.exe" -m pip install -e .
           "D:\AI\Python312\python.exe" -m pip install pytest
+          "D:\AI\Python312\python.exe" -m pip install ruff==0.11.13
+
+      - name: Run Ruff control-flow analysis
+        shell: cmd
+        run: |
+          "D:\AI\Python312\python.exe" -m ruff check --select F821,F823 runtime.py tests
 
       - name: Run pytest
         shell: cmd
