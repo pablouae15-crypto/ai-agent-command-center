@@ -7,6 +7,7 @@ import re
 from datetime import datetime, timezone
 
 from agent import SpecialistOutcome
+from agent import authorized_workspace_root_for
 from agent import run_specialist
 from agent import execute_approved_gmail_draft
 from agent import execute_approved_verified_edit
@@ -25,8 +26,6 @@ def _verified_edit_request_from_task(
         or task.get("description")
         or ""
     ).strip()
-
-    sandbox_root = r"D:\Shared-Local-Execution-Engine-Sandbox"
 
     legacy_pattern = re.compile(
         r'In\s+(?P<path>[A-Za-z]:\\[^,\r\n]+),\s*'
@@ -48,7 +47,7 @@ def _verified_edit_request_from_task(
     )
 
     match = legacy_pattern.search(text)
-    repository_path = sandbox_root
+    repository_path = None
 
     if match:
         repository_path = match.group("repo").strip()
@@ -62,11 +61,20 @@ def _verified_edit_request_from_task(
     old_text = match.group("old").strip()
     new_text = match.group("new").strip()
 
-    if not file_path.lower().startswith(sandbox_root.lower() + "\\"):
+    try:
+        file_root = authorized_workspace_root_for(file_path)
+    except PermissionError:
         return None
 
-    if repository_path.lower() != sandbox_root.lower():
-        return None
+    if repository_path is None:
+        repository_path = str(file_root)
+    else:
+        try:
+            repository_root = authorized_workspace_root_for(repository_path)
+        except PermissionError:
+            return None
+        if repository_root != file_root:
+            return None
 
     return VerifiedEditRequest(
         task_id=str(task["id"]),

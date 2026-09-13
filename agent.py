@@ -356,25 +356,56 @@ def calendar_list_events(
 SANDBOX_ROOT = Path(r"D:\Shared-Local-Execution-Engine-Sandbox")
 
 
+def authorized_workspace_roots() -> tuple[Path, ...]:
+    """Return the normalized roots configured for the local execution engine."""
+    return tuple(
+        Path(root).expanduser().resolve()
+        for root in settings.execution_engine_workspace_roots
+    )
+
+
+def authorized_workspace_root_for(path: str | Path) -> Path:
+    """Return the configured root containing path, or reject the path."""
+    candidate = Path(path).expanduser().resolve()
+
+    for root in authorized_workspace_roots():
+        try:
+            candidate.relative_to(root)
+            return root
+        except ValueError:
+            continue
+
+    raise PermissionError(
+        f"Path is outside configured authorized workspaces: {candidate}"
+    )
+
+
 def _require_sandbox_path(path: str, *, repository: bool = False) -> None:
-    sandbox = SANDBOX_ROOT.resolve()
     candidate = Path(path).resolve()
+    roots = authorized_workspace_roots()
+
+    if not roots:
+        raise PermissionError(
+            "No authorized execution-engine workspace is configured."
+        )
 
     if repository:
-        if candidate != sandbox:
+        if candidate not in roots:
             raise PermissionError(
-                "Verified edits require the repository path to be exactly "
-                r"D:\Shared-Local-Execution-Engine-Sandbox."
+                "Verified edits require the repository path to be exactly one "
+                "configured execution-engine workspace root."
             )
         return
 
     try:
-        candidate.relative_to(sandbox)
+        authorized_workspace_root_for(candidate)
     except ValueError as exc:
         raise PermissionError(
-            "Verified edits are restricted to "
-            r"D:\Shared-Local-Execution-Engine-Sandbox."
+            "Verified edits are restricted to configured execution-engine "
+            "workspace roots."
         ) from exc
+    except PermissionError:
+        raise
 
 
 def execute_approved_verified_edit(
@@ -944,7 +975,8 @@ def build_orchestrator(model: str, store: TaskStore, task_id: str) -> Agent:
             "cleanup, Git push, force-push, reset, clean, rebase, deployment, production database, "
             "credential, secret, or .env access. "
             "Work only inside explicitly authorized workspaces. "
-            "For the current integration phase, use the disposable sandbox only. "
+        "Use only workspaces configured in EXECUTION_ENGINE_WORKSPACE_ROOTS; "
+        "the disposable sandbox remains valid when configured. "
             "Follow a controlled loop: inspect, reason, use the next necessary safe tool, examine the "
             "result, and continue only when justified. "
             "Do not repeatedly rerun the same verification without a reason. "
@@ -952,10 +984,11 @@ def build_orchestrator(model: str, store: TaskStore, task_id: str) -> Agent:
             "The only permitted write operations are verified_replace_text and "
             "verified_write_text_file. Both may be used only with a real stored approval_id "
             "matching the exact approved request. verified_write_text_file may modify existing "
-            "sandbox files only and requires the approved current-file SHA256. "
+            "files inside a configured workspace only and requires the approved "
+            "current-file SHA256. "
             "Never fabricate, construct, infer, or substitute an approval record or approval_id. "
-            "Verified edits are restricted to D:\\Shared-Local-Execution-Engine-Sandbox, must use "
-            "sandbox_pytest verification, and must rely on the execution engine rollback behavior "
+            "Verified edits are restricted to configured workspace roots, must use a "
+            "registered verification profile, and must rely on the execution engine rollback behavior "
             "if verification fails. "
             "When finished, summarize what you inspected, what verification ran, the result, and any "
             "remaining issue. Keep the final answer concise and evidence-based."
@@ -979,7 +1012,7 @@ SPECIALIST_INSTRUCTIONS = {
     "Developer": (
         "Act as the Developer specialist. Focus on implementation, debugging, refactoring, "
         "small controlled code changes, and evidence-based verification. "
-        "When inspection identifies a concrete sandbox write that is required but no exact approved "
+        "When inspection identifies a concrete write inside a configured workspace that is required but no exact approved "
         "write is available, return status='blocked' and include a precise exact_edit_proposal with "
         "capability, path, old_text, new_text, and expected_replacements. Do not execute the write "
         "before exact human approval is granted. "
@@ -1018,7 +1051,7 @@ SPECIALIST_INSTRUCTIONS = {
         "summarizing information, preparing next actions, and coordinating work inside the "
         "Command Center. Do not claim to send email, modify calendars, browse external services, "
         "control the PC, or perform external actions unless a separately authorized typed tool "
-        "is explicitly provided. Preserve the existing approval and sandbox security boundary."
+        "is explicitly provided. Preserve the existing approval and configured-workspace security boundary."
     ),
     "Research / News": (
         "Act as the Research / News specialist. Use the provided hosted web-search capability "
@@ -1034,7 +1067,7 @@ SPECIALIST_INSTRUCTIONS = {
         "and distinguish verified requirements from assumptions or internal policy choices. "
         "Use only the safe local tools already provided to the base specialist. Do not send messages, "
         "modify external systems, expose personal data, make employment decisions on behalf of a human, "
-        "or perform external writes. Preserve the existing approval and sandbox security boundary."
+        "or perform external writes. Preserve the existing approval and configured-workspace security boundary."
     ),
     "Job Tracker": (
         "Act as the Job Tracker specialist. Focus on organizing job opportunities, application status, "
@@ -1345,8 +1378,11 @@ async def run_orchestrator(
                 f"Original task:\n{task['description']}",
                 f"Parent task ID:\n{task['id']}",
                 (
-                    "Authorized local sandbox workspace:\n"
-                    r"D:\Shared-Local-Execution-Engine-Sandbox"
+                    "Authorized local execution-engine workspaces:\n"
+                    + "\n".join(
+                        str(root)
+                        for root in settings.execution_engine_workspace_roots
+                    )
                 ),
                 f"Current stage instruction:\n{stage.instruction}",
             ]
@@ -1426,12 +1462,15 @@ async def run_orchestrator(
             ):
                 proposal = output.exact_edit_proposal
                 _require_sandbox_path(proposal.path)
+                repository_path = str(
+                    authorized_workspace_root_for(proposal.path)
+                )
                 store.create_exact_approval(
                     VerifiedEditRequest(
                         task_id=str(task["id"]),
                         capability=proposal.capability,
                         path=proposal.path,
-                        repository_path=r"D:\Shared-Local-Execution-Engine-Sandbox",
+                        repository_path=repository_path,
                         verification_profile="sandbox_pytest",
                         old_text=proposal.old_text,
                         new_text=proposal.new_text,

@@ -17,6 +17,8 @@ from write_approval import VerifiedEditRequest
 SANDBOX = r"D:\Shared-Local-Execution-Engine-Sandbox"
 APP_PATH = rf"{SANDBOX}\app.py"
 OTHER_PATH = rf"{SANDBOX}\other.py"
+REPOSITORY_ROOT = r"D:\AI-Agent-Command-Center"
+REPOSITORY_FILE = rf"{REPOSITORY_ROOT}\agent.py"
 
 
 def make_store(tmp_path: Path) -> TaskStore:
@@ -244,7 +246,46 @@ def test_modified_path_invalidates_exact_approval(
     assert fake_engine.calls == []
 
 
-def test_outside_sandbox_path_is_denied_before_execution(
+def test_configured_repository_root_is_allowed_after_exact_approval(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = make_store(tmp_path)
+    task = make_task(store)
+    request = VerifiedEditRequest(
+        task_id=str(task["id"]),
+        capability="replace_text",
+        path=REPOSITORY_FILE,
+        repository_path=REPOSITORY_ROOT,
+        verification_profile="sandbox_pytest",
+        old_text="from __future__ import annotations",
+        new_text="from __future__ import annotations # approved",
+        expected_replacements=1,
+    )
+    approval_row = approve(store, request)
+
+    fake_engine = FakeExecutionEngine()
+    monkeypatch.setattr(agent, "execution_engine", fake_engine)
+
+    tool = build_verified_replace_text_tool(store, str(task["id"]))
+    result = invoke_tool(
+        tool,
+        {
+            "approval_id": str(approval_row["id"]),
+            "path": REPOSITORY_FILE,
+            "repository_path": REPOSITORY_ROOT,
+            "old_text": request.old_text,
+            "new_text": request.new_text,
+            "expected_replacements": 1,
+        },
+    )
+
+    assert "verified" in result
+    assert len(fake_engine.calls) == 1
+    assert fake_engine.calls[0]["repository_path"] == REPOSITORY_ROOT
+
+
+def test_outside_configured_workspace_path_is_denied_before_execution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -252,7 +293,7 @@ def test_outside_sandbox_path_is_denied_before_execution(
     task = make_task(store)
 
     payload = valid_payload("unused-approval")
-    payload["path"] = r"D:\AI-Agent-Command-Center\agent.py"
+    payload["path"] = r"D:\Not-A-Configured-Workspace\agent.py"
 
     fake_engine = FakeExecutionEngine()
     monkeypatch.setattr(agent, "execution_engine", fake_engine)
@@ -265,7 +306,7 @@ def test_outside_sandbox_path_is_denied_before_execution(
     assert fake_engine.calls == []
 
 
-def test_wrong_repository_path_is_denied_before_execution(
+def test_wrong_repository_root_is_denied_before_execution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -273,7 +314,7 @@ def test_wrong_repository_path_is_denied_before_execution(
     task = make_task(store)
 
     payload = valid_payload("unused-approval")
-    payload["repository_path"] = r"D:\AI-Agent-Command-Center"
+    payload["repository_path"] = r"D:\Not-A-Configured-Workspace"
 
     fake_engine = FakeExecutionEngine()
     monkeypatch.setattr(agent, "execution_engine", fake_engine)

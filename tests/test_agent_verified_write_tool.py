@@ -254,14 +254,14 @@ def test_outside_sandbox_full_write_is_denied(
         tool,
         {
             "approval_id": "unused",
-            "path": r"D:\AI-Agent-Command-Center\agent.py",
+            "path": r"D:\Not-A-Configured-Workspace\agent.py",
             "repository_path": SANDBOX,
             "content": "blocked",
             "expected_sha256": "a" * 64,
         },
     )
 
-    assert "restricted to" in result
+    assert "outside configured authorized workspaces" in result
     assert fake_engine.calls == []
 
 
