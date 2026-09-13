@@ -117,6 +117,39 @@ def test_personal_assistant_handoff_rejects_oversized_context_before_task_creati
 
     assert store.list_tasks() == []
 
+def test_parse_verified_edit_batch_request_preserves_multiline_new_text() -> None:
+    from personal_assistant import _parse_verified_edit_batch_request
+
+    request_text = "\n".join(
+        [
+            "*Capability: replace_text_batch",
+            r"*Repository path: D:\AI-Agent-Command-Center",
+            "*Verification profile: sandbox_pytest",
+            "Edit 1:",
+            r"*Path: D:\AI-Agent-Command-Center\execution_adapter.py",
+            "*Old text: return self._engine",
+            "*New text: assert self._engine is not None",
+            "        return self._engine",
+            "*Expected replacements: 1",
+        ]
+    )
+
+    parsed = _parse_verified_edit_batch_request(request_text)
+
+    assert parsed is not None
+    assert parsed["capability"] == "replace_text_batch"
+    assert parsed["repository_path"] == r"D:\AI-Agent-Command-Center"
+    assert parsed["verification_profile"] == "sandbox_pytest"
+    assert "Edit 1:" not in parsed["verification_profile"]
+
+    edit = parsed["edits"][0]
+
+    assert edit["new_text"] == (
+        "assert self._engine is not None\n"
+        "        return self._engine"
+    )
+    assert edit["expected_replacements"] == 1
+
 
 
 
