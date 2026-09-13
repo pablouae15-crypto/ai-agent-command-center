@@ -61,3 +61,41 @@ def test_personal_assistant_context_compacts_task_payloads(tmp_path: Path) -> No
 
     serialized = json.dumps(context, default=str)
     assert len(serialized) < 10000
+
+
+def test_personal_assistant_context_compacts_repeated_records(
+    tmp_path: Path,
+) -> None:
+    import json
+
+    from personal_assistant import build_personal_assistant_context
+    from store import TaskStore
+
+    store = TaskStore(
+        tmp_path / "compact-context.db",
+        tmp_path / "compact-context.jsonl",
+    )
+    store.seed_defaults()
+
+    task = store.create_task(
+        title="Context compaction task",
+        description="Keep this task visible.",
+        agent_name="Orchestrator",
+    )
+    store.add_activity(
+        "test.large_activity",
+        "Recent activity",
+        task_id=str(task["id"]),
+        payload={"large": "X" * 20000},
+    )
+
+    context = build_personal_assistant_context(store)
+
+    assert len(context["agents"]) == 12
+    assert all(
+        set(agent) == {"name", "status", "current_task_id"}
+        for agent in context["agents"]
+    )
+    assert all("payload_json" not in activity for activity in context["activity"])
+    assert all("display_payload_json" not in approval for approval in context["approvals"])
+    assert len(json.dumps(context, default=str)) < 10000

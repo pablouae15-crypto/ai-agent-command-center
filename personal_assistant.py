@@ -7,6 +7,10 @@ from risk import should_defer_exact_approval
 from store import TaskStore
 
 
+CONTEXT_TASK_LIMIT = 8
+CONTEXT_ACTIVITY_LIMIT = 8
+
+
 class PersonalAssistantRequest(BaseModel):
     request: str = Field(min_length=1, max_length=10000)
     title: str | None = Field(default=None, max_length=200)
@@ -39,7 +43,7 @@ def _default_title(request: str) -> str:
 
 
 def build_personal_assistant_context(store: TaskStore) -> dict[str, Any]:
-    visible_tasks = store.list_task_visibility(12)
+    visible_tasks = store.list_task_visibility(CONTEXT_TASK_LIMIT)
 
     compact_tasks = [
         {
@@ -61,12 +65,45 @@ def build_personal_assistant_context(store: TaskStore) -> dict[str, Any]:
         for task in visible_tasks
     ]
 
+    compact_agents = [
+        {
+            "name": agent.get("name"),
+            "status": agent.get("status"),
+            "current_task_id": agent.get("current_task_id"),
+        }
+        for agent in store.list_agents()
+    ]
+
+    compact_approvals = [
+        {
+            "id": approval.get("id"),
+            "task_id": approval.get("task_id"),
+            "action": approval.get("action"),
+            "reason": approval.get("reason"),
+            "status": approval.get("status"),
+            "created_at": approval.get("created_at"),
+        }
+        for approval in store.list_approvals()
+    ]
+
+    compact_activity = [
+        {
+            "id": activity.get("id"),
+            "event_type": activity.get("event_type"),
+            "message": activity.get("message"),
+            "task_id": activity.get("task_id"),
+            "agent_name": activity.get("agent_name"),
+            "created_at": activity.get("created_at"),
+        }
+        for activity in store.list_activity(CONTEXT_ACTIVITY_LIMIT)
+    ]
+
     return {
         "summary": store.summary(),
-        "agents": store.list_agents(),
+        "agents": compact_agents,
         "tasks": compact_tasks,
-        "approvals": store.list_approvals(),
-        "activity": store.list_activity(15),
+        "approvals": compact_approvals,
+        "activity": compact_activity,
     }
 
 
